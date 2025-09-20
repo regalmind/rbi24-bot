@@ -312,66 +312,123 @@ async function handleUpdate(update) {
 
     await registerOrUpdateUser(userId, firstName, lastName, username, null);
 
-    // handle callback
+    // ---- handle callbacks (replaces previous callback block) ----
     if (callback) {
       await answerCallbackQuery(callback.id);
       const cd = callback.data;
+
+      // Back buttons (edit existing message to main menu)
       if (cd === "back_to_main") {
-        await editMessageText(chatId, callback.message.message_id, formatMessage("خوش آمدید به ربات RBI24", "لطفاً یکی از گزینه‌ها را انتخاب کنید:", "💎 RBI24"), mainMenuKeyboard());
-        await setUserState(userId, "", "", "");
+        await editMessageText(chatId, callback.message.message_id,
+          formatMessage("خوش آمدید به ربات RBI24", "لطفاً یکی از گزینه‌ها را انتخاب کنید:", "💎 RBI24"),
+          mainMenuKeyboard());
+        await setUserState(userId, "", "main_shown", "");
         return;
       }
+
+      // Back to main as a NEW message (used when we want to keep history)
+      if (cd === "back_to_main_send") {
+        await sendMessage(chatId, formatMessage("خوش آمدید به ربات RBI24", "لطفاً یکی از گزینه‌ها را انتخاب کنید:", "💎 RBI24"), mainMenuKeyboard());
+        await setUserState(userId, "", "main_shown", "");
+        return;
+      }
+
+      // آموزش‌ها / درباره‌ی ما -> ویرایش پیام جاری و افزودن دکمه بازگشت (back_to_main)
+      if (cd === "edu_menu" || cd === "about_menu") {
+        const title = cd === "edu_menu" ? "آموزش‌ها" : "درباره‌ی ما";
+        const content = "محتواهای این بخش در حال آماده سازی میباشد.\nاز صبر و شکیبایی شما متشکریم - تیم پشتیبانی RBI24";
+        const kb = { inline_keyboard: [[{ text: "↩️ بازگشت به منوی اصلی", callback_data: "back_to_main" }]] };
+        await editMessageText(chatId, callback.message.message_id, formatMessage(title, content), kb);
+        await setUserState(userId, "", `${cd}_shown`, "");
+        return;
+      }
+
+      // Support main menu -> edit current message to show support submenu
       if (cd === "support_menu") {
         await editMessageText(chatId, callback.message.message_id, formatMessage("سیستم پشتیبانی RBI24", "ما همیشه کنار شما هستیم. یکی از گزینه‌ها را انتخاب کنید:"), supportMenuKeyboard());
         await setUserState(userId, "", "support_menu", "");
         return;
       }
+
+      // CHat online -> keep history (send new message) and add back_to_main_send
       if (cd === "support_chat_ai") {
-        await sendMessage(chatId, formatMessage("چت آنلاین (AI)", "هوش مصنوعی و چت‌بات سیستم در حال برنامه‌نویسی و آماده‌سازی می‌باشد؛ از شکیبایی شما سپاس‌گزاریم.\n\nتیم پشتیبانی RBI24"));
+        const kb = { inline_keyboard: [[{ text: "↩️ بازگشت به منوی اصلی", callback_data: "back_to_main_send" }]] };
+        await sendMessage(chatId, formatMessage("چت آنلاین (AI)", "هوش مصنوعی و چت‌بات سیستم در حال برنامه‌نویسی و آماده‌سازی می‌باشد؛ از شکیبایی شما سپاس‌گزاریم.\n\nتیم پشتیبانی RBI24"), kb);
         return;
       }
+
+      // Send ticket -> keep history. Use stored email if available; if not, ask for email (fallback)
       if (cd === "support_ticket") {
-        await setUserState(userId, "awaiting_ticket_email", "support_menu", "");
-        await sendMessage(chatId, formatMessage("ارسال تیکت", "📧 لطفاً ایمیل خود را وارد کنید (مثل example@domain.com):"));
+        const userRec = await getUserById(userId);
+        if (userRec && userRec.email) {
+          // use stored email, set state to await the ticket message
+          await setUserState(userId, "awaiting_ticket_message", "support_menu", userRec.email);
+          const kb = { inline_keyboard: [[{ text: "↩️ بازگشت به منوی اصلی", callback_data: "back_to_main_send" }]] };
+          await sendMessage(chatId, formatMessage("ارسال تیکت", "📧 لطفاً پیام تیکت خود را اینجا وارد نمایید. (ایمیل ثبت‌شده شما در سیستم به‌صورت خودکار ارسال خواهد شد)"), kb);
+        } else {
+          // fallback: if no stored email, ask for email (previous behavior)
+          await setUserState(userId, "awaiting_ticket_email", "support_menu", "");
+          const kb = { inline_keyboard: [[{ text: "↩️ بازگشت به منوی اصلی", callback_data: "back_to_main_send" }]] };
+          await sendMessage(chatId, formatMessage("ارسال تیکت", "📧 لطفاً ایمیل خود را وارد کنید (مثل example@domain.com):"), kb);
+        }
         return;
       }
+
+      // Invest -> replace current menu (edit) and include "done" button and back button
       if (cd === "support_invest") {
-        const kb = { inline_keyboard: [[{ text: "↩️ بازگشت به منوی قبل", callback_data: "back_to_support" }], [{ text: "✅ انجام شد", callback_data: "invest_done" }]] };
-        await sendMessage(chatId, formatMessage("درخواست سرمایه‌گذاری", "لطفا مبلغ مد نظر جهت سرمایه‌گذاری را به صورت ارز USDT از طریق شبکه BEP20 به آدرس ولت زیر انتقال داده سپس گزینه [انجام شد] را فشار دهید.\n\nآدرس ولت: <code>YOUR_BEP20_WALLET_ADDRESS</code>"), kb);
+        const kb = { inline_keyboard: [[{ text: "↩️ بازگشت به منوی اصلی", callback_data: "back_to_main" }], [{ text: "✅ انجام شد", callback_data: "invest_done" }]] };
+        await editMessageText(chatId, callback.message.message_id, formatMessage("درخواست سرمایه‌گذاری", "لطفا مبلغ مد نظر جهت سرمایه‌گذاری را به صورت ارز USDT از طریق شبکه BEP20 به آدرس ولت زیر انتقال داده سپس گزینه [انجام شد] را فشار دهید.\n\nآدرس ولت: <code>YOUR_BEP20_WALLET_ADDRESS</code>"), kb);
+        await setUserState(userId, "", "support_invest", "");
         return;
       }
+
+      // After invest done -> ask for fullname (send new message)
       if (cd === "invest_done") {
         await setUserState(userId, "awaiting_invest_fullname", "support_invest", "");
         await sendMessage(chatId, formatMessage("ثبت سرمایه‌گذاری", "لطفا نام و نام خانوادگی خود را کامل وارد نمایید:"));
         return;
       }
+
+      // Withdraw -> replace menu (edit)
       if (cd === "support_withdraw") {
-        const kb = { inline_keyboard: [[{ text: "↩️ بازگشت به منوی قبل", callback_data: "back_to_support" }], [{ text: "✅ انجام شد", callback_data: "withdraw_start" }]] };
-        await sendMessage(chatId, formatMessage("برداشت سود و کمیسیون", "برای برداشت وجه، لطفاً شرایط را رعایت کرده و سپس دکمه انجام شد را فشار دهید."), kb);
+        const kb = { inline_keyboard: [[{ text: "↩️ بازگشت به منوی اصلی", callback_data: "back_to_main" }], [{ text: "✅ انجام شد", callback_data: "withdraw_start" }]] };
+        await editMessageText(chatId, callback.message.message_id, formatMessage("برداشت سود و کمیسیون", "برای برداشت وجه، لطفاً شرایط را رعایت کرده و سپس دکمه انجام شد را فشار دهید."), kb);
+        await setUserState(userId, "", "support_withdraw", "");
         return;
       }
+
       if (cd === "withdraw_start") {
         await setUserState(userId, "awaiting_withdraw_fullname", "support_withdraw", "");
         await sendMessage(chatId, formatMessage("درخواست برداشت", "لطفا نام و نام خانوادگی خود را به صورت کامل وارد نمایید:"));
         return;
       }
+
+      // Support email -> replace (edit) and provide back to support
+      if (cd === "support_email") {
+        const kb = { inline_keyboard: [[{ text: "↩️ بازگشت", callback_data: "back_to_support" }]] };
+        await editMessageText(chatId, callback.message.message_id, formatMessage("پشتیبانی ایمیلی", "📧 لطفاً با ایمیل <b>support@rbi24.com</b> تماس بگیرید."), kb);
+        return;
+      }
+
+      // FAQ -> replace (edit)
+      if (cd === "support_faq") {
+        const kb = { inline_keyboard: [[{ text: "↩️ بازگشت", callback_data: "back_to_support" }]] };
+        await editMessageText(chatId, callback.message.message_id, formatMessage("پرسش‌های متداول", "محتوا های این منو در حال آماده سازی میباشد، از شکیبایی شما نهایت قدردانی را داریم _ تیم پشتیبانی صندوق سرمایه گذاری RBI"), kb);
+        return;
+      }
+
+      // Back to support menu (edit)
       if (cd === "back_to_support") {
         await editMessageText(chatId, callback.message.message_id, formatMessage("سیستم پشتیبانی RBI24", "ما همیشه کنار شما هستیم. یکی از گزینه‌ها را انتخاب کنید:"), supportMenuKeyboard());
         await setUserState(userId, "", "support_menu", "");
         return;
       }
-      if (cd === "support_email") {
-        await sendMessage(chatId, formatMessage("پشتیبانی ایمیلی", "📧 لطفاً با ایمیل <b>support@rbi24.com</b> تماس بگیرید."), { inline_keyboard: [[{ text: "↩️ بازگشت", callback_data: "back_to_support" }]] });
-        return;
-      }
-      if (cd === "support_faq") {
-        await sendMessage(chatId, formatMessage("پرسش‌های متداول", "محتوا های این منو در حال آماده سازی میباشد، از شکیبایی شما نهایت قدردانی را داریم _ تیم پشتیبانی صندوق سرمایه گذاری RBI"));
-        return;
-      }
+
+      // fallback
       return;
     }
 
-    // normal message handling
+    // ---- Normal message handling (non-callback) ----
     // read state
     const state = await getUserState(userId);
     const step = state.step || "";
@@ -553,4 +610,5 @@ async function main() {
 main().catch(err => {
   console.error('Fatal error during startup', err);
   process.exit(1);
+
 });
