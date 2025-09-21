@@ -304,7 +304,6 @@ async function handleUpdate(update) {
       from = callback.from;
     }
 
-    // ensure basic user record
     const firstName = from?.first_name || "";
     const lastName = from?.last_name || "";
     const username = from?.username || "";
@@ -312,142 +311,157 @@ async function handleUpdate(update) {
 
     await registerOrUpdateUser(userId, firstName, lastName, username, null);
 
-    // ---- handle callbacks (replaces previous callback block) ----
+    // ---- handle callbacks ----
     if (callback) {
       await answerCallbackQuery(callback.id);
       const cd = callback.data;
 
-      // Back buttons (edit existing message to main menu)
+      // back (edit current message to main menu)
       if (cd === "back_to_main") {
         await editMessageText(chatId, callback.message.message_id,
           formatMessage("خوش آمدید به ربات RBI24", "لطفاً یکی از گزینه‌ها را انتخاب کنید:", "💎 RBI24"),
           mainMenuKeyboard());
+        // record that this message is the current menu
+        await recordMenuMessage(userId, chatId, callback.message.message_id);
         await setUserState(userId, "", "main_shown", "");
         return;
       }
 
-      // Back to main as a NEW message (used when we want to keep history)
+      // back as new message (keep history)
       if (cd === "back_to_main_send") {
-        await sendMessage(chatId, formatMessage("خوش آمدید به ربات RBI24", "لطفاً یکی از گزینه‌ها را انتخاب کنید:", "💎 RBI24"), mainMenuKeyboard());
+        // delete any previous menu, then send menu as new message
+        await deleteMenuIfExists(userId, chatId);
+        const mid = await sendMessage(chatId, formatMessage("خوش آمدید به ربات RBI24", "لطفاً یکی از گزینه‌ها را انتخاب کنید:"), mainMenuKeyboard());
+        if (mid) await recordMenuMessage(userId, chatId, mid);
         await setUserState(userId, "", "main_shown", "");
         return;
       }
 
-      // آموزش‌ها / درباره‌ی ما -> ویرایش پیام جاری و افزودن دکمه بازگشت (back_to_main)
+      // آموزش‌ها / درباره ما -> edit current message and add back button
       if (cd === "edu_menu" || cd === "about_menu") {
         const title = cd === "edu_menu" ? "آموزش‌ها" : "درباره‌ی ما";
         const content = "محتواهای این بخش در حال آماده سازی میباشد.\nاز صبر و شکیبایی شما متشکریم - تیم پشتیبانی RBI24";
         const kb = { inline_keyboard: [[{ text: "↩️ بازگشت به منوی اصلی", callback_data: "back_to_main" }]] };
         await editMessageText(chatId, callback.message.message_id, formatMessage(title, content), kb);
+        await recordMenuMessage(userId, chatId, callback.message.message_id);
         await setUserState(userId, "", `${cd}_shown`, "");
         return;
       }
 
-      // Support main menu -> edit current message to show support submenu
+      // support menu -> edit
       if (cd === "support_menu") {
         await editMessageText(chatId, callback.message.message_id, formatMessage("سیستم پشتیبانی RBI24", "ما همیشه کنار شما هستیم. یکی از گزینه‌ها را انتخاب کنید:"), supportMenuKeyboard());
+        await recordMenuMessage(userId, chatId, callback.message.message_id);
         await setUserState(userId, "", "support_menu", "");
         return;
       }
 
-      // CHat online -> keep history (send new message) and add back_to_main_send
+      // chat online -> keep history (send new message) + back button (send)
       if (cd === "support_chat_ai") {
+        await deleteMenuIfExists(userId, chatId);
         const kb = { inline_keyboard: [[{ text: "↩️ بازگشت به منوی اصلی", callback_data: "back_to_main_send" }]] };
-        await sendMessage(chatId, formatMessage("چت آنلاین (AI)", "هوش مصنوعی و چت‌بات سیستم در حال برنامه‌نویسی و آماده‌سازی می‌باشد؛ از شکیبایی شما سپاس‌گزاریم.\n\nتیم پشتیبانی RBI24"), kb);
+        const mid = await sendMessage(chatId, formatMessage("چت آنلاین (AI)", "هوش مصنوعی و چت‌بات سیستم در حال برنامه‌نویسی و آماده‌سازی می‌باشد؛ از شکیبایی شما سپاس‌گزاریم.\n\nتیم پشتیبانی RBI24"), kb);
+        if (mid) await recordMenuMessage(userId, chatId, mid);
         return;
       }
 
-      // Send ticket -> keep history. Use stored email if available; if not, ask for email (fallback)
+      // send ticket -> keep history, use stored email if exists (no new email request)
       if (cd === "support_ticket") {
         const userRec = await getUserById(userId);
         if (userRec && userRec.email) {
-          // use stored email, set state to await the ticket message
-          await setUserState(userId, "awaiting_ticket_message", "support_menu", userRec.email);
+          // delete old menu and open new prompt message
+          await deleteMenuIfExists(userId, chatId);
+          // set state: awaiting_ticket_message and store email in tempData
+          await setUserStateFields(userId, { step: "awaiting_ticket_message", tempData: userRec.email });
           const kb = { inline_keyboard: [[{ text: "↩️ بازگشت به منوی اصلی", callback_data: "back_to_main_send" }]] };
-          await sendMessage(chatId, formatMessage("ارسال تیکت", "📧 لطفاً پیام تیکت خود را اینجا وارد نمایید. (ایمیل ثبت‌شده شما در سیستم به‌صورت خودکار ارسال خواهد شد)"), kb);
+          const mid = await sendMessage(chatId, formatMessage("ارسال تیکت", "📧 لطفاً پیام تیکت خود را اینجا وارد نمایید. (ایمیل ثبت‌شده شما به‌صورت خودکار همراه تیکت ارسال خواهد شد)"), kb);
+          if (mid) await recordMenuMessage(userId, chatId, mid);
         } else {
-          // fallback: if no stored email, ask for email (previous behavior)
-          await setUserState(userId, "awaiting_ticket_email", "support_menu", "");
+          // fallback: ask for email (old behavior), keep it as new message
+          await deleteMenuIfExists(userId, chatId);
+          await setUserStateFields(userId, { step: "awaiting_ticket_email", tempData: "" });
           const kb = { inline_keyboard: [[{ text: "↩️ بازگشت به منوی اصلی", callback_data: "back_to_main_send" }]] };
-          await sendMessage(chatId, formatMessage("ارسال تیکت", "📧 لطفاً ایمیل خود را وارد کنید (مثل example@domain.com):"), kb);
+          const mid = await sendMessage(chatId, formatMessage("ارسال تیکت", "📧 لطفاً ایمیل خود را وارد کنید (مثل example@domain.com):"), kb);
+          if (mid) await recordMenuMessage(userId, chatId, mid);
         }
         return;
       }
 
-      // Invest -> replace current menu (edit) and include "done" button and back button
+      // invest -> replace current menu (edit) OR if user clicks confirm -> proceed
       if (cd === "support_invest") {
-        const kb = { inline_keyboard: [[{ text: "↩️ بازگشت به منوی اصلی", callback_data: "back_to_main" }], [{ text: "✅ انجام شد", callback_data: "invest_done" }]] };
-        await editMessageText(chatId, callback.message.message_id, formatMessage("درخواست سرمایه‌گذاری", "لطفا مبلغ مد نظر جهت سرمایه‌گذاری را به صورت ارز USDT از طریق شبکه BEP20 به آدرس ولت زیر انتقال داده سپس گزینه [انجام شد] را فشار دهید.\n\nآدرس ولت: <code>YOUR_BEP20_WALLET_ADDRESS</code>"), kb);
+        await editMessageText(chatId, callback.message.message_id, formatMessage("درخواست سرمایه‌گذاری", "لطفا مبلغ مد نظر جهت سرمایه‌گذاری را به صورت ارز USDT از طریق شبکه BEP20 به آدرس ولت زیر انتقال داده سپس گزینه [انجام شد] را فشار دهید.\n\nآدرس ولت: <code>YOUR_BEP20_WALLET_ADDRESS</code>"), { inline_keyboard: [[{ text: "↩️ بازگشت به منوی اصلی", callback_data: "back_to_main" }], [{ text: "✅ انجام شد", callback_data: "invest_done" }]] });
+        await recordMenuMessage(userId, chatId, callback.message.message_id);
         await setUserState(userId, "", "support_invest", "");
         return;
       }
 
-      // After invest done -> ask for fullname (send new message)
       if (cd === "invest_done") {
-        await setUserState(userId, "awaiting_invest_fullname", "support_invest", "");
-        await sendMessage(chatId, formatMessage("ثبت سرمایه‌گذاری", "لطفا نام و نام خانوادگی خود را کامل وارد نمایید:"));
+        // send new message to collect fullname
+        await deleteMenuIfExists(userId, chatId);
+        await setUserStateFields(userId, { step: "awaiting_invest_fullname", tempData: "" });
+        const mid = await sendMessage(chatId, formatMessage("ثبت سرمایه‌گذاری", "لطفا نام و نام خانوادگی خود را کامل وارد نمایید:"));
+        if (mid) await recordMenuMessage(userId, chatId, mid);
         return;
       }
 
-      // Withdraw -> replace menu (edit)
+      // withdraw -> replace (edit)
       if (cd === "support_withdraw") {
-        const kb = { inline_keyboard: [[{ text: "↩️ بازگشت به منوی اصلی", callback_data: "back_to_main" }], [{ text: "✅ انجام شد", callback_data: "withdraw_start" }]] };
-        await editMessageText(chatId, callback.message.message_id, formatMessage("برداشت سود و کمیسیون", "برای برداشت وجه، لطفاً شرایط را رعایت کرده و سپس دکمه انجام شد را فشار دهید."), kb);
+        await editMessageText(chatId, callback.message.message_id, formatMessage("برداشت سود و کمیسیون", "برای برداشت وجه، لطفاً شرایط را رعایت کرده و سپس دکمه انجام شد را فشار دهید."), { inline_keyboard: [[{ text: "↩️ بازگشت به منوی اصلی", callback_data: "back_to_main" }], [{ text: "✅ انجام شد", callback_data: "withdraw_start" }]] });
+        await recordMenuMessage(userId, chatId, callback.message.message_id);
         await setUserState(userId, "", "support_withdraw", "");
         return;
       }
 
       if (cd === "withdraw_start") {
-        await setUserState(userId, "awaiting_withdraw_fullname", "support_withdraw", "");
-        await sendMessage(chatId, formatMessage("درخواست برداشت", "لطفا نام و نام خانوادگی خود را به صورت کامل وارد نمایید:"));
+        await deleteMenuIfExists(userId, chatId);
+        await setUserStateFields(userId, { step: "awaiting_withdraw_fullname", tempData: "" });
+        const mid = await sendMessage(chatId, formatMessage("درخواست برداشت", "لطفا نام و نام خانوادگی خود را به صورت کامل وارد نمایید:"));
+        if (mid) await recordMenuMessage(userId, chatId, mid);
         return;
       }
 
-      // Support email -> replace (edit) and provide back to support
+      // support email / faq / back_to_support etc (edit)
       if (cd === "support_email") {
-        const kb = { inline_keyboard: [[{ text: "↩️ بازگشت", callback_data: "back_to_support" }]] };
-        await editMessageText(chatId, callback.message.message_id, formatMessage("پشتیبانی ایمیلی", "📧 لطفاً با ایمیل <b>support@rbi24.com</b> تماس بگیرید."), kb);
+        await editMessageText(chatId, callback.message.message_id, formatMessage("پشتیبانی ایمیلی", "📧 لطفاً با ایمیل <b>support@rbi24.com</b> تماس بگیرید."), { inline_keyboard: [[{ text: "↩️ بازگشت", callback_data: "back_to_support" }]] });
+        await recordMenuMessage(userId, chatId, callback.message.message_id);
         return;
       }
 
-      // FAQ -> replace (edit)
       if (cd === "support_faq") {
-        const kb = { inline_keyboard: [[{ text: "↩️ بازگشت", callback_data: "back_to_support" }]] };
-        await editMessageText(chatId, callback.message.message_id, formatMessage("پرسش‌های متداول", "محتوا های این منو در حال آماده سازی میباشد، از شکیبایی شما نهایت قدردانی را داریم _ تیم پشتیبانی صندوق سرمایه گذاری RBI"), kb);
+        await editMessageText(chatId, callback.message.message_id, formatMessage("پرسش‌های متداول", "محتوا های این منو در حال آماده سازی میباشد، از شکیبایی شما نهایت قدردانی را داریم _ تیم پشتیبانی صندوق سرمایه گذاری RBI"), { inline_keyboard: [[{ text: "↩️ بازگشت", callback_data: "back_to_support" }]] });
+        await recordMenuMessage(userId, chatId, callback.message.message_id);
         return;
       }
 
-      // Back to support menu (edit)
       if (cd === "back_to_support") {
         await editMessageText(chatId, callback.message.message_id, formatMessage("سیستم پشتیبانی RBI24", "ما همیشه کنار شما هستیم. یکی از گزینه‌ها را انتخاب کنید:"), supportMenuKeyboard());
-        await setUserState(userId, "", "support_menu", "");
+        await recordMenuMessage(userId, chatId, callback.message.message_id);
         return;
       }
 
-      // fallback
       return;
     }
 
-    // ---- Normal message handling (non-callback) ----
-    // read state
+    // ---- Normal text handling (non-callback) ----
     const state = await getUserState(userId);
     const step = state.step || "";
 
     // /start
     if (text && text.trim() === "/start") {
       const user = await getUserById(userId);
+      // delete previous menus to keep chat clean
+      await deleteMenuIfExists(userId, chatId);
+      const mid = await sendMessage(chatId, formatMessage("خوش آمدید به ربات RBI24", "لطفاً یکی از گزینه‌های زیر را انتخاب کنید:"), mainMenuKeyboard());
+      if (mid) await recordMenuMessage(userId, chatId, mid);
       if (user && user.email) {
-        await sendMessage(chatId, formatMessage("خوش آمدید", "ایمیل شما قبلاً ثبت شده است. لطفاً یکی از گزینه‌های زیر را انتخاب کنید:"), mainMenuKeyboard());
         await setUserState(userId, "", "main_shown", "");
-        return;
       } else {
-        await setUserState(userId, "awaiting_email", "awaiting_email_shown", "");
-        await sendMessage(chatId, formatMessage("خوش آمدید", "🌟 سلام! برای شروع، لطفاً ایمیل خودتون رو وارد کنید (مثل example@domain.com):"));
-        return;
+        await setUserStateFields(userId, { step: "awaiting_email" });
       }
+      return;
     }
 
-    // collect email
+    // collect email (initial registration)
     if (step === "awaiting_email" && text) {
       const email = text.trim();
       if (!email.includes("@") || !email.includes(".")) {
@@ -465,27 +479,38 @@ async function handleUpdate(update) {
       if (await canSendEmailToUser(userId, email)) {
         await sendEmailSafe(email, "Welcome to RBI24 Bot!", `<p>Dear ${firstName},</p><p>Welcome to RBI24 Bot!</p>`);
       }
-      await sendMessage(chatId, formatMessage("ثبت شد", "ایمیل شما با موفقیت ثبت شد. حالا می‌توانید از منوها استفاده کنید."), mainMenuKeyboard());
+      await deleteMenuIfExists(userId, chatId);
+      const mid = await sendMessage(chatId, formatMessage("ثبت شد", "ایمیل شما با موفقیت ثبت شد. حالا می‌توانید از منوها استفاده کنید."), mainMenuKeyboard());
+      if (mid) await recordMenuMessage(userId, chatId, mid);
       await setUserState(userId, "", "main_shown", "");
       return;
     }
 
-    // ticket flow
+    // ticket flow - if asking for email then message then append ticket
     if (step === "awaiting_ticket_email" && text) {
       const email = text.trim();
       if (!email.includes("@") || !email.includes(".")) {
         await sendMessage(chatId, formatMessage("ایمیل نامعتبر", "📧 لطفاً یک ایمیل معتبر وارد کنید (مثل example@domain.com):"));
         return;
       }
-      await setUserState(userId, "awaiting_ticket_message", "support_menu", email);
-      await sendMessage(chatId, formatMessage("پیام تیکت", "🎫 لطفا پیام خود را وارد کنید:"));
+      // store email in tempData and ask for message
+      await setUserStateFields(userId, { step: "awaiting_ticket_message", tempData: email });
+      await deleteMenuIfExists(userId, chatId);
+      const mid = await sendMessage(chatId, formatMessage("پیام تیکت", "🎫 لطفا پیام خود را وارد کنید:"));
+      if (mid) await recordMenuMessage(userId, chatId, mid);
       return;
     } else if (step === "awaiting_ticket_message" && text) {
       const email = state.tempData || "";
       const tid = `TICKET_${Date.now()}_${Math.floor(Math.random()*10000)}`;
-      await appendRow("Tickets", [tid, userId, email, text, "", new Date().toISOString(), ""]);
+      const createdAt = getNow();
+      await appendRow("Tickets", [tid, userId, email, text, "", createdAt, ""]);
       await clearUserState(userId);
-      await sendMessage(chatId, formatMessage("تیکت ثبت شد", "✅ تیکت شما با موفقیت ثبت شد! تیم پشتیبانی به زودی پاسخ شما را خواهد داد."));
+      // send confirmation + back to main button (send new message)
+      await deleteMenuIfExists(userId, chatId);
+      const kb = { inline_keyboard: [[{ text: "↩️ بازگشت به منوی اصلی", callback_data: "back_to_main_send" }]] };
+      const mid = await sendMessage(chatId, formatMessage("تیکت ثبت شد", "✅ تیکت شما با موفقیت ثبت شد! تیم پشتیبانی به زودی پاسخ شما را خواهد داد."), kb);
+      if (mid) await recordMenuMessage(userId, chatId, mid);
+      // notify admin
       await sendMessage(ADMIN_CHAT_ID, `📢 تیکت جدید!\nکاربر: ${firstName} (@${username || "ندارد"})\nایمیل: ${email}\nمتن: ${text}`);
       if (await canSendEmailToUser(userId, email)) {
         await sendEmailSafe(email, "RBI24 Support Ticket Received", `<p>Dear ${firstName},</p><p>Your ticket has been received. We will contact you soon.</p>`);
@@ -500,14 +525,16 @@ async function handleUpdate(update) {
         await sendMessage(chatId, formatMessage("نام نامعتبر", "لطفا نام و نام خانوادگی خود را به درستی وارد نمایید."));
         return;
       }
-      await setUserState(userId, "awaiting_invest_tx", "support_invest", fullName);
+      await setUserStateFields(userId, { step: "awaiting_invest_tx", tempData: fullName });
+      await deleteMenuIfExists(userId, chatId);
       await sendMessage(chatId, formatMessage("ثبت سرمایه‌گذاری", "لطفا تراکنش (TxHash) واریزی خود را وارد نمایید سپس کلید تایید را بفشارید."));
       return;
     } else if (step === "awaiting_invest_tx" && text) {
       const tx = text.trim();
       const prev = state.tempData || "";
       const fullName = prev;
-      await setUserState(userId, "awaiting_invest_duration", "support_invest", `${fullName}||${tx}`);
+      await setUserStateFields(userId, { step: "awaiting_invest_duration", tempData: `${fullName}||${tx}` });
+      await deleteMenuIfExists(userId, chatId);
       await sendMessage(chatId, formatMessage("ثبت سرمایه‌گذاری", "لطفا مدت زمان مد نظر برای قرارداد خود را وارد نمایید سپس کلید تایید را بفشارید."));
       return;
     } else if (step === "awaiting_invest_duration" && text) {
@@ -516,8 +543,9 @@ async function handleUpdate(update) {
       const parts = prev.split("||");
       const fullName = parts[0] || "";
       const tx = parts[1] || "";
-      await setUserState(userId, "awaiting_invest_amount", "support_invest", `${fullName}||${tx}||${duration}`);
-      await sendMessage(chatId, formatMessage("ثبت سرمایه‌گذاری", "لطفا مبلغ واریزی خود را وارد نمایید سپس کلید تایید را بفشارید."));
+      await setUserStateFields(userId, { step: "awaiting_invest_amount", tempData: `${fullName}||${tx}||${duration}` });
+      await deleteMenuIfExists(userId, chatId);
+      await sendMessage(chatId, formatMessage("ثبت سرمایه‌گذاری", "لطفا مبلغ واریزی خود را وارد نمایید سپس کلید تایید را بفشارید.\n(توجه: لطفاً فقط عدد را با ارقام لاتین وارد کنید)"));
       return;
     } else if (step === "awaiting_invest_amount" && text) {
       const amount = text.trim();
@@ -526,27 +554,31 @@ async function handleUpdate(update) {
       const tx = parts[1] || "";
       const duration = parts[2] || "";
       const reqId = `INV_${Date.now()}_${Math.floor(Math.random()*10000)}`;
-      await appendRow("InvestRequests", [reqId, userId, fullName, tx, duration, amount, "Pending", "No", new Date().toISOString()]);
+      const createdAt = getNow();
+      await appendRow("InvestRequests", [reqId, userId, fullName, tx, duration, amount, "Pending", "No", createdAt]);
       await clearUserState(userId);
-      await sendMessage(chatId, formatMessage("درخواست ثبت شد", "✅ اطلاعات ثبت شد. کارشناسان ما بعد از بررسی نتیجه را به شما اطلاع میدهند."));
+      // send confirmation + back to main (send)
+      await deleteMenuIfExists(userId, chatId);
+      const kb = { inline_keyboard: [[{ text: "↩️ بازگشت به منوی اصلی", callback_data: "back_to_main_send" }]] };
+      const mid = await sendMessage(chatId, formatMessage("درخواست ثبت شد", "✅ اطلاعات ثبت شد. کارشناسان ما بعد از بررسی نتیجه را به شما اطلاع میدهند."), kb);
+      if (mid) await recordMenuMessage(userId, chatId, mid);
+      // notify admin
       await sendMessage(ADMIN_CHAT_ID, `📢 درخواست سرمایه‌گذاری جدید\nکاربر: ${fullName} (ID: ${userId})\nمبلغ: ${amount}\nduration: ${duration}\ntx: ${tx}\nRequestID: ${reqId}`);
-      const userRec = await getUserById(userId);
-      if (userRec && userRec.email && await canSendEmailToUser(userId, userRec.email)) {
-        await sendEmailSafe(userRec.email, "درخواست سرمایه‌گذاری شما ثبت شد", `<p>درخواست شما با شناسه <b>${reqId}</b> ثبت شد و در صف بررسی است.</p>`);
-      }
       return;
     }
 
     // withdraw multi-step
     if (step === "awaiting_withdraw_fullname" && text) {
       const fn = text.trim();
-      await setUserState(userId, "awaiting_withdraw_wallet", "support_withdraw", fn);
+      await setUserStateFields(userId, { step: "awaiting_withdraw_wallet", tempData: fn });
+      await deleteMenuIfExists(userId, chatId);
       await sendMessage(chatId, formatMessage("درخواست برداشت", "لطفا آدرس ولت USDT شبکه BEP20 را وارد نمایید."));
       return;
     } else if (step === "awaiting_withdraw_wallet" && text) {
       const wallet = text.trim();
       const prev = state.tempData || "";
-      await setUserState(userId, "awaiting_withdraw_amount", "support_withdraw", `${prev}||${wallet}`);
+      await setUserStateFields(userId, { step: "awaiting_withdraw_amount", tempData: `${prev}||${wallet}` });
+      await deleteMenuIfExists(userId, chatId);
       await sendMessage(chatId, formatMessage("درخواست برداشت", "لطفا مبلغ مورد نظر جهت برداشت را وارد نمایید."));
       return;
     } else if (step === "awaiting_withdraw_amount" && text) {
@@ -555,29 +587,25 @@ async function handleUpdate(update) {
       const fullName = parts[0] || "";
       const wallet = parts[1] || "";
       const reqId = `WDR_${Date.now()}_${Math.floor(Math.random()*10000)}`;
-      await appendRow("WithdrawRequests", [reqId, userId, fullName, wallet, amount, "Pending", "No", new Date().toISOString()]);
+      const createdAt = getNow();
+      await appendRow("WithdrawRequests", [reqId, userId, fullName, wallet, amount, "Pending", "No", createdAt]);
       await clearUserState(userId);
-      await sendMessage(chatId, formatMessage("درخواست ثبت شد", "✅ درخواست برداشت شما با موفقیت ثبت شد. کارشناسان ما پس از بررسی اطلاع‌رسانی می‌کنند."));
+      // send confirmation + back to main (send new msg)
+      await deleteMenuIfExists(userId, chatId);
+      const kb = { inline_keyboard: [[{ text: "↩️ بازگشت به منوی اصلی", callback_data: "back_to_main_send" }]] };
+      const mid = await sendMessage(chatId, formatMessage("درخواست ثبت شد", "✅ درخواست برداشت شما با موفقیت ثبت شد. کارشناسان ما پس از بررسی اطلاع‌رسانی می‌کنند."), kb);
+      if (mid) await recordMenuMessage(userId, chatId, mid);
+      // notify admin
       await sendMessage(ADMIN_CHAT_ID, `📢 درخواست برداشت جدید\nکاربر: ${fullName} (ID: ${userId})\nwallet: ${wallet}\namount: ${amount}\nRequestID: ${reqId}`);
-      const userRec = await getUserById(userId);
-      if (userRec && userRec.email && await canSendEmailToUser(userId, userRec.email)) {
-        await sendEmailSafe(userRec.email, "درخواست برداشت شما ثبت شد", `<p>درخواست برداشت شما با شناسه <b>${reqId}</b> ثبت شد و در صف بررسی است.</p>`);
-      }
       return;
     }
 
-    // default: show menu
+    // default: if any other text and not in step, show main menu as new message (and clean previous)
     if (text && !step) {
-      const userRec = await getUserById(userId);
-      if (userRec && userRec.email) {
-        await sendMessage(chatId, formatMessage("خوش آمدید به ربات RBI24", "لطفاً یکی از گزینه‌های زیر را انتخاب کنید:"), mainMenuKeyboard());
-        await setUserState(userId, "", "main_shown", "");
-        return;
-      } else {
-        await setUserState(userId, "awaiting_email", "awaiting_email_shown", "");
-        await sendMessage(chatId, formatMessage("خوش آمدید", "🌟 لطفاً ایمیل خود را وارد کنید (مثل example@domain.com):"));
-        return;
-      }
+      await deleteMenuIfExists(userId, chatId);
+      const mid = await sendMessage(chatId, formatMessage("خوش آمدید به ربات RBI24", "لطفاً یکی از گزینه‌های زیر را انتخاب کنید:"), mainMenuKeyboard());
+      if (mid) await recordMenuMessage(userId, chatId, mid);
+      return;
     }
 
   } catch (err) {
@@ -601,6 +629,191 @@ app.post('/webhook', async (req, res) => {
 
 app.get('/', (req, res) => res.send('RBI24 Bot running'));
 
+// ----------------- Helpers for State & Menu management -----------------
+
+// get current time string (Tehran) for human readable timestamp
+function getNow() {
+  try {
+    // format: YYYY-MM-DD HH:MM:SS (tehran time)
+    return new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Tehran' }).replace('T', ' ');
+  } catch (e) {
+    return new Date().toISOString();
+  }
+}
+
+// setUserStateFields: update specific named fields for user's State row.
+// fields: { step, tempData, lastMenu, tempEmail } - any subset allowed.
+async function setUserStateFields(userId, fields) {
+  const data = await readSheet("State");
+  let idx = -1;
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === String(userId)) { idx = i; break; }
+  }
+  if (idx === -1) {
+    // append new row with columns A:UserID, B:Step, C:TempData, D:LastMenu, E:TempEmail
+    const row = [userId,
+      fields.step || "",
+      fields.tempData || "",
+      fields.lastMenu || "",
+      fields.tempEmail || ""
+    ];
+    await appendRow("State", row);
+  } else {
+    const row = data[idx];
+    // ensure length at least 5
+    while (row.length < 5) row.push("");
+    if (fields.step !== undefined) row[1] = fields.step;
+    if (fields.tempData !== undefined) row[2] = fields.tempData;
+    if (fields.lastMenu !== undefined) row[3] = fields.lastMenu;
+    if (fields.tempEmail !== undefined) row[4] = fields.tempEmail;
+    await updateRow("State", idx + 1, row);
+  }
+}
+
+// backward-compatible wrapper: original code calls setUserState(userId, step, tempData, lastMenu, tempEmail)
+async function setUserState(userId, step = "", tempData = "", lastMenu = "", tempEmail = "") {
+  await setUserStateFields(userId, { step, tempData, lastMenu, tempEmail });
+}
+
+async function getUserState(userId) {
+  const data = await readSheet("State");
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === String(userId)) {
+      return {
+        step: data[i][1] || "",
+        tempData: data[i][2] || "",
+        lastMenu: data[i][3] || "",
+        tempEmail: data[i][4] || "",
+        rowIndex: i + 1
+      };
+    }
+  }
+  return { step: "", tempData: "", lastMenu: "", tempEmail: "" };
+}
+
+async function clearUserState(userId) {
+  const data = await readSheet("State");
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === String(userId)) {
+      await updateRow("State", i + 1, [userId, "", "", "", ""]);
+      return;
+    }
+  }
+}
+
+// delete the previously recorded menu message (if exists) — used to keep chat clean.
+// exceptMessageId: if provided, won't delete that message (useful when editing that message)
+async function deleteMenuIfExists(userId, chatId, exceptMessageId = null) {
+  try {
+    const s = await getUserState(userId);
+    const last = s.lastMenu;
+    if (last && String(last) !== String(exceptMessageId)) {
+      // try delete
+      try {
+        await telegramCall('deleteMessage', { chat_id: String(chatId), message_id: Number(last) });
+      } catch (e) {
+        // ignore if can't delete (maybe already deleted)
+      }
+      // clear lastMenu in state
+      await setUserStateFields(userId, { lastMenu: "" });
+    }
+  } catch (e) { console.error("deleteMenuIfExists error", e); }
+}
+
+// record a message id as the "current menu" for the user
+async function recordMenuMessage(userId, chatId, messageId) {
+  // delete existing menu if different
+  await deleteMenuIfExists(userId, chatId, messageId);
+  await setUserStateFields(userId, { lastMenu: String(messageId) });
+}
+
+// ----------------- Admin sync endpoint -----------------
+// Protect this route with a secret token (set ENV: ADMIN_SYNC_SECRET)
+app.get('/admin/sync', async (req, res) => {
+  const secret = req.query.secret || "";
+  if (!process.env.ADMIN_SYNC_SECRET || secret !== process.env.ADMIN_SYNC_SECRET) {
+    return res.status(403).send('Forbidden');
+  }
+  try {
+    // 1) Tickets: send answers
+    const tickets = await readSheet("Tickets");
+    // header expected: ["TicketID","UserID","Email","Message","Answer","CreatedAt","AnsweredAt"]
+    for (let i = 1; i < tickets.length; i++) {
+      const row = tickets[i];
+      const ticketId = row[0];
+      const userId = row[1];
+      const email = row[2];
+      const message = row[3];
+      const answer = row[4] || "";
+      const answeredAt = row[6] || "";
+      const notified = row[7] || row[8] || ""; // tolerate different layouts
+      if (answer && (!notified || String(notified).toLowerCase() === 'no')) {
+        // send answer to user
+        const text = `📢 پاسخ تیکت شما (${ticketId}):\n\n${answer}`;
+        try {
+          await sendMessage(userId, text);
+        } catch (e) { console.error("send ticket answer failed", e); }
+        // update sheet: Notified = Yes, AnsweredAt = now
+        const now = getNow();
+        // ensure length then update: we will update columns F (CreatedAt) stays, G (AnsweredAt) index 6
+        await updateRow("Tickets", i + 1, [ticketId, userId, email, message, answer, row[5] || "", now]);
+      }
+    }
+
+    // 2) InvestRequests: notify when status changed (Pending -> Accepted/Rejected)
+    const invests = await readSheet("InvestRequests");
+    // headers: ["RequestID","UserID","FullName","TxHash","Duration","Amount","Status","Notified","CreatedAt"]
+    for (let i = 1; i < invests.length; i++) {
+      const row = invests[i];
+      const reqId = row[0];
+      const userId = row[1];
+      const fullName = row[2] || "";
+      const tx = row[3] || "";
+      const duration = row[4] || "";
+      const amount = row[5] || "";
+      const status = (row[6] || "Pending").trim();
+      const notified = (row[7] || "").toString().toLowerCase();
+      if (status !== "Pending" && notified !== "yes") {
+        // notify user
+        let text = "";
+        if (status === "Accepted") text = `✅ درخواست سرمایه‌گذاری شما (${reqId}) تایید شد.\nمبلغ: ${amount}\nمدت: ${duration}\nبا تشکر.`;
+        else if (status === "Rejected") text = `❌ متاسفانه درخواست سرمایه‌گذاری شما (${reqId}) رد شد.\nبا پشتیبانی تماس بگیرید.`;
+        else text = `اطلاعیه درباره درخواست ${reqId}: وضعیت = ${status}`;
+        try { await sendMessage(userId, text); } catch(e){ console.error("notify invest user failed", e); }
+        // update Notified and optionally a NotifiedAt column: we'll set Notified = Yes and keep CreatedAt
+        await updateRow("InvestRequests", i + 1, [reqId, userId, fullName, tx, duration, amount, status, "Yes", row[8] || getNow()]);
+      }
+    }
+
+    // 3) WithdrawRequests: similar logic
+    const wds = await readSheet("WithdrawRequests");
+    // headers: ["RequestID","UserID","FullName","WalletAddress","Amount","Status","Notified","CreatedAt"]
+    for (let i = 1; i < wds.length; i++) {
+      const row = wds[i];
+      const reqId = row[0];
+      const userId = row[1];
+      const fullname = row[2] || "";
+      const wallet = row[3] || "";
+      const amount = row[4] || "";
+      const status = (row[5] || "Pending").trim();
+      const notified = (row[6] || "").toString().toLowerCase();
+      if (status !== "Pending" && notified !== "yes") {
+        let text = "";
+        if (status === "Accepted") text = `✅ درخواست برداشت شما (${reqId}) تایید و پرداخت شد.\nمبلغ: ${amount}\nآدرس: ${wallet}`;
+        else if (status === "Rejected") text = `❌ درخواست برداشت شما (${reqId}) رد شد. لطفاً با پشتیبانی تماس بگیرید.`;
+        else text = `اطلاعیه درباره برداشت ${reqId}: وضعیت = ${status}`;
+        try { await sendMessage(userId, text); } catch (e) { console.error("notify withdraw user failed", e); }
+        await updateRow("WithdrawRequests", i + 1, [reqId, userId, fullname, wallet, amount, status, "Yes", row[7] || getNow()]);
+      }
+    }
+
+    res.send('Sync completed');
+  } catch (e) {
+    console.error("admin sync error", e);
+    res.status(500).send('Error');
+  }
+});
+
 async function main() {
   await initSheetsClient();
   await ensureSheetHeaders();
@@ -612,3 +825,4 @@ main().catch(err => {
   process.exit(1);
 
 });
+
