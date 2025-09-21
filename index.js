@@ -1,5 +1,4 @@
-// index.js 
-
+// index.js
 const express = require('express');
 const bodyParser = require('body-parser');
 const axios = require('axios');
@@ -9,53 +8,8 @@ const { v4: uuidv4 } = require('uuid');
 const app = express();
 app.use(bodyParser.json());
 
-// ----------------- Simple in-memory rate limiter -----------------
-// Note: resets on process restart. For production use persistent store.
-const rateLimiter = {
-  lastStartAt: new Map(),   // userId -> timestamp (ms)
-  lastEmailAt: new Map(),   // userId -> timestamp (ms)
-  emailAttempts: new Map()  // userId -> { count, windowStartMs }
-};
-
-// helper: allowStart(userId) -> boolean
-function allowStart(userId) {
-  try {
-    const now = Date.now();
-    const prev = rateLimiter.lastStartAt.get(String(userId)) || 0;
-    const MIN_MS = 3000; // 3 seconds between /start
-    if (now - prev < MIN_MS) return false;
-    rateLimiter.lastStartAt.set(String(userId), now);
-    return true;
-  } catch (e) { return true; }
-}
-
-// helper: allowEmailSubmit(userId) -> boolean
-// allows 1 email submit per 60s, max 5 attempts per hour
-function allowEmailSubmit(userId) {
-  try {
-    const now = Date.now();
-    const last = rateLimiter.lastEmailAt.get(String(userId)) || 0;
-    const MIN_MS = 60 * 1000; // 60 seconds between email attempts
-    if (now - last < MIN_MS) return false;
-
-    // windowed attempts
-    const windowMs = 60 * 60 * 1000; // 1 hour
-    const rec = rateLimiter.emailAttempts.get(String(userId)) || { count: 0, windowStart: now };
-    if (now - rec.windowStart > windowMs) {
-      // reset window
-      rec.count = 0;
-      rec.windowStart = now;
-    }
-    if (rec.count >= 5) return false; // max 5 per hour
-    rec.count += 1;
-    rateLimiter.emailAttempts.set(String(userId), rec);
-    rateLimiter.lastEmailAt.set(String(userId), now);
-    return true;
-  } catch (e) { return true; }
-}
-
 // ---- Configuration from environment variables ----
-const BOT_TOKEN = process.env.BOT_TOKEN; // set in Cloud Run / Render
+const BOT_TOKEN = process.env.BOT_TOKEN; // set in Cloud Run
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID; // set in Cloud Run
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || ""; // set in Cloud Run
 const PORT = process.env.PORT || 8080;
@@ -71,6 +25,7 @@ const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 // expects GOOGLE_SERVICE_ACCOUNT_KEY JSON string in env (or use GOOGLE_APPLICATION_CREDENTIALS on Cloud Run)
 let sheetsClient;
 async function initSheetsClient() {
+  // If a raw JSON key is present in env var, use it; else rely on default ADC (Cloud Run service account)
   const rawKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_JSON;
   let auth;
   if (rawKey) {
@@ -119,57 +74,6 @@ async function answerCallbackQuery(callbackQueryId, text) {
   return telegramCall('answerCallbackQuery', { callback_query_id: callbackQueryId, text });
 }
 
-// ----------------- sendEmailSafe (SMTP via nodemailer with fallback) -----------------
-async function sendEmailSafe(to, subject, htmlBody) {
-  const host = process.env.SMTP_HOST || "";
-  const user = process.env.SMTP_USER || "";
-  const pass = process.env.SMTP_PASS || "";
-  const port = Number(process.env.SMTP_PORT || 587);
-  const secure = String(process.env.SMTP_SECURE || "false").toLowerCase() === "true";
-  const from = process.env.EMAIL_FROM || user || 'no-reply@rbi24.com';
-
-  if (!host || !user || !pass) {
-    // fallback: pretend send (current behavior) + admin notification
-    console.log(`sendEmailSafe (pretend) -> to:${to}, subject:${subject}`);
-    try { await sendMessage(ADMIN_CHAT_ID, `📧 pretend sendEmail to ${to} subject:${subject}`); } catch(e){}
-    return true;
-  }
-
-  let nodemailer;
-  try {
-    nodemailer = require('nodemailer');
-  } catch (e) {
-    console.error('nodemailer not installed. run: npm install nodemailer', e);
-    try { await sendMessage(ADMIN_CHAT_ID, `📧 nodemailer missing, pretend sendEmail to ${to} subject:${subject}`); } catch(e){}
-    return false;
-  }
-
-  try {
-    const transporter = nodemailer.createTransport({
-      host,
-      port,
-      secure,
-      auth: { user, pass }
-    });
-
-    await transporter.sendMail({
-      from,
-      to,
-      subject,
-      html: htmlBody,
-      text: htmlBody.replace(/<[^>]*>/g, '')
-    });
-
-    console.log(`sendEmailSafe -> sent to ${to}`);
-    try { await sendMessage(ADMIN_CHAT_ID, `📧 Email sent to ${to} subject:${subject}`); } catch(e){}
-    return true;
-  } catch (err) {
-    console.error("sendEmailSafe error:", err);
-    try { await sendMessage(ADMIN_CHAT_ID, `⚠️ sendEmail failed: ${String(err.message || err)}`); } catch(e){}
-    return false;
-  }
-}
-
 // ---- Sheets utilities ----
 async function ensureSheetHeaders() {
   const sheets = sheetsClient;
@@ -183,17 +87,20 @@ async function ensureSheetHeaders() {
     { name: "BroadcastLogs", headers: ["BroadcastID", "UserID", "MessageID", "SentAt", "DeletedFlag"] }
   ];
 
+  // read spreadsheet to find existing sheets
   const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
   const existing = spreadsheet.data.sheets.map(s => s.properties.title);
 
   for (const s of meta) {
     if (!existing.includes(s.name)) {
+      // create sheet
       await sheets.spreadsheets.batchUpdate({
         spreadsheetId: SPREADSHEET_ID,
         requestBody: {
           requests: [{ addSheet: { properties: { title: s.name } } }]
         }
       });
+      // set headers
       await sheets.spreadsheets.values.update({
         spreadsheetId: SPREADSHEET_ID,
         range: `${s.name}!A1`,
@@ -201,6 +108,7 @@ async function ensureSheetHeaders() {
         requestBody: { values: [s.headers] }
       });
     } else {
+      // ensure headers exist (simple: set headers to first row)
       await sheets.spreadsheets.values.update({
         spreadsheetId: SPREADSHEET_ID,
         range: `${s.name}!A1`,
@@ -211,6 +119,7 @@ async function ensureSheetHeaders() {
   }
 }
 
+// helper: append row
 async function appendRow(sheetName, rowValues) {
   await sheetsClient.spreadsheets.values.append({
     spreadsheetId: SPREADSHEET_ID,
@@ -220,11 +129,13 @@ async function appendRow(sheetName, rowValues) {
   });
 }
 
+// helper: read all
 async function readSheet(sheetName) {
   const res = await sheetsClient.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${sheetName}` });
   return res.data.values || [];
 }
 
+// helper find row by first col value (returns 0-based index in data)
 function findIndexByFirstCol(data, val) {
   for (let i = 1; i < data.length; i++) {
     if (String(data[i][0]) === String(val)) return i;
@@ -232,40 +143,42 @@ function findIndexByFirstCol(data, val) {
   return -1;
 }
 
+// update a row by row number (1-based)
 async function updateRow(sheetName, rowNumber, rowValues) {
   const range = `${sheetName}!A${rowNumber}:Z${rowNumber}`;
   await sheetsClient.spreadsheets.values.update({
     spreadsheetId: SPREADSHEET_ID,
     range,
-    valueInputOption: 'RAW',
+    valueInputOption: "RAW",
     requestBody: { values: [rowValues] }
   });
 }
 
-// ----------------- registerOrUpdateUser (uses getNow() for JoinedAt) -----------------
-async function registerOrUpdateUser(userId, firstName, lastName, username, email) {
-  const data = await readSheet("Users");
-  const idx = findIndexByFirstCol(data, userId);
-  const now = getNow(); // uses Asia/Tehran formatting
-  if (idx > -1) {
-    const row = data[idx];
-    row[1] = username || row[1] || "";
-    row[2] = firstName || row[2] || "";
-    row[3] = lastName || row[3] || "";
-    if (email) row[4] = email;
-    if (!row[5] || String(row[5]).trim() === "") row[5] = now;
-    await updateRow("Users", idx + 1, row);
-  } else {
-    await appendRow("Users", [userId, username || "", firstName || "", lastName || "", email || "", now]);
-  }
-}
-
+// get user from Users by ID
 async function getUserById(userId) {
   const data = await readSheet("Users");
   const idx = findIndexByFirstCol(data, userId);
   if (idx === -1) return null;
-  const row = data[idx];
+  const row = data[idx]; // row is array
   return { userId: row[0], username: row[1], firstName: row[2], lastName: row[3], email: row[4], rowIndex: idx + 1 };
+}
+
+// register or update user
+async function registerOrUpdateUser(userId, firstName, lastName, username, email) {
+  const data = await readSheet("Users");
+  const idx = findIndexByFirstCol(data, userId);
+  const now = new Date().toISOString();
+  if (idx > -1) {
+    const row = data[idx];
+    // update columns 2..5
+    row[1] = username || row[1] || "";
+    row[2] = firstName || row[2] || "";
+    row[3] = lastName || row[3] || "";
+    if (email) row[4] = email;
+    await updateRow("Users", idx + 1, row);
+  } else {
+    await appendRow("Users", [userId, username || "", firstName || "", lastName || "", email || "", now]);
+  }
 }
 
 // get & set user state in State sheet
@@ -302,42 +215,45 @@ async function clearUserState(userId) {
   }
 }
 
-// ----------------- Helpers for State & Menu management -----------------
-
-// get current time string (Tehran) for human readable timestamp
-function getNow() {
-  try {
-    return new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Tehran' }).replace('T', ' ');
-  } catch (e) {
-    return new Date().toISOString();
+// canSendEmail (simple)
+async function canSendEmailToUser(userId, email) {
+  const data = await readSheet("EmailLog");
+  const idx = findIndexByFirstCol(data, userId);
+  const now = new Date();
+  const oneDayAgo = new Date(now.getTime() - 24*60*60*1000);
+  if (idx > -1) {
+    const row = data[idx];
+    let count = Number(row[2] || 0);
+    let lastSent = row[3] ? new Date(row[3]) : new Date(0);
+    if (lastSent > oneDayAgo) {
+      if (count >= 3) return false;
+      row[2] = count + 1;
+      row[3] = now.toISOString();
+      await updateRow("EmailLog", idx + 1, row);
+    } else {
+      row[2] = 1;
+      row[3] = now.toISOString();
+      await updateRow("EmailLog", idx + 1, row);
+    }
+  } else {
+    await appendRow("EmailLog", [userId, email || "", 1, now.toISOString()]);
   }
+  return true;
 }
 
-// setUserStateFields: update specific named fields for user's State row.
-// fields: { step, tempData, lastMenu, tempEmail } - any subset allowed.
-async function setUserStateFields(userId, fields) {
-  const data = await readSheet("State");
-  let idx = -1;
-  for (let i = 1; i < data.length; i++) {
-    if (String(data[i][0]) === String(userId)) { idx = i; break; }
+async function sendEmailSafe(to, subject, htmlBody) {
+  // Cloud Run cannot directly use MailApp — need external SMTP or transactional email.
+  // For now we'll notify admin and skip actual email sending — or you can integrate SendGrid/SMTP.
+  // We'll just log and notify admin.
+  console.log(`sendEmailSafe -> to:${to}, subject:${subject}`);
+  try {
+    await sendMessage(ADMIN_CHAT_ID, `📧 (pretend) sendEmail to ${to} subject:${subject}`);
+    return true;
+  } catch (e) {
+    console.error("sendEmailSafe failed", e);
+    return false;
   }
-  if (idx === -1) {
-    const row = [userId,
-      fields.step || "",
-      fields.tempData || "",
-      fields.lastMenu || "",
-      fields.tempEmail || ""
-    ];
-    await appendRow("State", row);
-  } else {
-    const row = data[idx];
-    while (row.length < 5) row.push("");
-    if (fields.step !== undefined) row[1] = fields.step;
-    if (fields.tempData !== undefined) row[2] = fields.tempData;
-    if (fields.lastMenu !== undefined) row[3] = fields.lastMenu;
-    if (fields.tempEmail !== undefined) row[4] = fields.tempEmail;
-    await updateRow("State", idx + 1, row);
-  }
+}
 
 // ---- Formatting & Keyboards ----
 function formatMessage(title, content, footer) {
@@ -370,31 +286,6 @@ function supportMenuKeyboard() {
   };
 }
 
-// delete the previously recorded menu message (if exists) — used to keep chat clean.
-// exceptMessageId: if provided, won't delete that message (useful when editing that message)
-async function deleteMenuIfExists(userId, chatId, exceptMessageId = null) {
-  try {
-    const s = await getUserState(userId);
-    const last = s.lastMenu;
-    if (last && String(last) !== String(exceptMessageId)) {
-      try {
-        await telegramCall('deleteMessage', { chat_id: String(chatId), message_id: Number(last) });
-      } catch (e) {
-        // ignore if can't delete (maybe already deleted)
-      }
-      // clear lastMenu in state
-      await setUserStateFields(userId, { lastMenu: "" });
-    }
-  } catch (e) { console.error("deleteMenuIfExists error", e); }
-}
-
-// record a message id as the "current menu" for the user
-async function recordMenuMessage(userId, chatId, messageId) {
-  // delete existing menu if different
-  await deleteMenuIfExists(userId, chatId, messageId);
-  await setUserStateFields(userId, { lastMenu: String(messageId) });
-}
-
 // ---- Business logic: handle updates ----
 async function handleUpdate(update) {
   try {
@@ -418,7 +309,7 @@ async function handleUpdate(update) {
     const username = from?.username || "";
     const userId = chatId;
 
-    // ensure user row exists (JoinedAt kept)
+    // ensure user row exists but DO NOT overwrite email (email parameter is null)
     await registerOrUpdateUser(userId, firstName, lastName, username, null);
 
     // ---- handle callbacks ----
@@ -430,7 +321,7 @@ async function handleUpdate(update) {
       if (cd === "back_to_main") {
         await deleteMenuIfExists(userId, chatId, callback.message.message_id); // حذف منوی قبلی (نه پیام جاری)
         const mid = await sendMessage(chatId, formatMessage("خوش آمدید به ربات پارسی زبان RBI24", "لطفاً یکی از گزینه‌ها را انتخاب کنید:"), mainMenuKeyboard());
-        if (mid) await recordMenuMessage(userId, chatId, mid);
+        if (mid) await setUserStateFields(userId, { lastMenu: String(mid) });
         await setUserState(userId, "", "main_shown", "");
         return;
       }
@@ -439,7 +330,7 @@ async function handleUpdate(update) {
       if (cd === "back_to_main_send") {
         await deleteMenuIfExists(userId, chatId);
         const mid = await sendMessage(chatId, formatMessage("خوش آمدید به ربات RBI24", "لطفاً یکی از گزینه‌ها را انتخاب کنید:"), mainMenuKeyboard());
-        if (mid) await recordMenuMessage(userId, chatId, mid);
+        if (mid) await setUserStateFields(userId, { lastMenu: String(mid) });
         await setUserState(userId, "", "main_shown", "");
         return;
       }
@@ -450,7 +341,6 @@ async function handleUpdate(update) {
         const content = "محتواهای این بخش در حال آماده سازی میباشد.\nاز صبر و شکیبایی شما متشکریم - تیم پشتیبانی RBI24";
         const kb = { inline_keyboard: [[{ text: "↩️ بازگشت به منوی اصلی", callback_data: "back_to_main" }]] };
         await editMessageText(chatId, callback.message.message_id, formatMessage(title, content), kb);
-        // record this menu message as lastMenu
         await setUserStateFields(userId, { lastMenu: String(callback.message.message_id) });
         await setUserState(userId, "", `${cd}_shown`, "");
         return;
@@ -468,7 +358,7 @@ async function handleUpdate(update) {
       if (cd === "support_chat_ai") {
         await deleteMenuIfExists(userId, chatId);
         const kb = { inline_keyboard: [[{ text: "↩️ بازگشت به منوی اصلی", callback_data: "back_to_main_send" }]] };
-        await sendMessage(chatId, formatMessage("چت آنلاین (AI)", "هوش مصنوعی و چت‌بات سیستم در حال برنامه‌نویسی و آماده‌سازی می‌باشد؛ از شکیبایی شما سپاس‌گزاریم.\n\nتیم پشتیبانی RBI24"), kb);
+        const mid = await sendMessage(chatId, formatMessage("چت آنلاین (AI)", "هوش مصنوعی و چت‌بات سیستم در حال برنامه‌نویسی و آماده‌سازی می‌باشد؛ از شکیبایی شما سپاس‌گزاریم.\n\nتیم پشتیبانی RBI24"), kb);
         // این پیام یک منوی پایدار نیست (ما آن را به عنوان lastMenu ثبت نمی‌کنیم) — تا با زدن بازگشت پاک نشود
         return;
       }
@@ -482,7 +372,6 @@ async function handleUpdate(update) {
           const kb = { inline_keyboard: [[{ text: "↩️ بازگشت به منوی اصلی", callback_data: "back_to_main_send" }]] };
           await sendMessage(chatId, formatMessage("ارسال تیکت", "📧 لطفاً پیام تیکت خود را اینجا وارد نمایید. (ایمیل ثبت‌شده شما به‌صورت خودکار همراه تیکت ارسال خواهد شد)"), kb);
         } else {
-          // ask for email (first-time)
           await setUserStateFields(userId, { step: "awaiting_ticket_email", tempData: "" });
           const kb = { inline_keyboard: [[{ text: "↩️ بازگشت به منوی اصلی", callback_data: "back_to_main_send" }]] };
           await sendMessage(chatId, formatMessage("ارسال تیکت", "📧 لطفاً ایمیل خود را وارد کنید (مثل example@domain.com):"), kb);
@@ -550,28 +439,26 @@ async function handleUpdate(update) {
     const state = await getUserState(userId);
     const step = state.step || "";
 
-    // /start : rate-limited, پاک کردن منوهای قبلی و ارسال منوی اصلی جدید
+    // /start : بررسی ایمیل کاربر **قبل** از ارسال منوی اصلی
     if (text && text.trim() === "/start") {
-      if (!allowStart(userId)) return; // ignore spammy /start
       await deleteMenuIfExists(userId, chatId);
-      const mid = await sendMessage(chatId, formatMessage("خوش آمدید به ربات RBI24", "لطفاً یکی از گزینه‌های زیر را انتخاب کنید:"), mainMenuKeyboard());
-      if (mid) await recordMenuMessage(userId, chatId, mid);
       const user = await getUserById(userId);
-      if (user && user.email) {
+
+      // اگر ایمیل ثبت شده وجود دارد -> منوی اصلی را بفرست
+      if (user && user.email && String(user.email).trim() !== "") {
+        const mid = await sendMessage(chatId, formatMessage("خوش آمدید به ربات RBI24", "لطفاً یکی از گزینه‌های زیر را انتخاب کنید:"), mainMenuKeyboard());
+        if (mid) await setUserStateFields(userId, { lastMenu: String(mid) });
         await setUserState(userId, "", "main_shown", "");
       } else {
-        await setUserStateFields(userId, { step: "awaiting_email" });
+        // ایمیل وجود ندارد -> مستقیماً ایمیل بپرس (یکبار از لحظه عضویت)
+        await setUserStateFields(userId, { step: "awaiting_email", tempData: "" });
+        await sendMessage(chatId, formatMessage("خوش آمدید", "🌟 سلام! برای شروع، لطفاً ایمیل خودتون رو وارد کنید (مثل example@domain.com):"));
       }
       return;
     }
 
-    // ثبت ایمیل اولیه (یکبار در زمان عضویت)
+    // ثبت ایمیل اولیه
     if (step === "awaiting_email" && text) {
-      // rate-limit email submissions
-      if (!allowEmailSubmit(userId)) {
-        await sendMessage(chatId, formatMessage("محدودیت ارسال", "لطفاً چند لحظه صبر کنید و دوباره تلاش کنید."));
-        return;
-      }
       const email = text.trim();
       if (!email.includes("@") || !email.includes(".")) {
         await sendMessage(chatId, formatMessage("ایمیل نامعتبر", "📧 لطفاً یک ایمیل معتبر وارد کنید (مثل example@domain.com):"));
@@ -583,17 +470,14 @@ async function handleUpdate(update) {
         await sendMessage(chatId, formatMessage("ایمیل تکراری", "📧 این ایمیل قبلاً توسط کاربر دیگری ثبت شده است."));
         return;
       }
-      // save email to Users row (JoinedAt retained)
+      // ثبت ایمیل (فقط یکبار - بعد از ثبت دیگر از کاربر پرسیده نمی‌شود)
       await registerOrUpdateUser(userId, firstName, lastName, username, email);
-
-      // notify via email (pretend or real if SMTP configured)
       if (await canSendEmailToUser(userId, email)) {
         await sendEmailSafe(email, "Welcome to RBI24 Bot!", `<p>Dear ${firstName},</p><p>Welcome to RBI24 Bot!</p>`);
       }
-
       await deleteMenuIfExists(userId, chatId);
       const mid = await sendMessage(chatId, formatMessage("ثبت شد", "ایمیل شما با موفقیت ثبت شد. حالا می‌توانید از منوها استفاده کنید."), mainMenuKeyboard());
-      if (mid) await recordMenuMessage(userId, chatId, mid);
+      if (mid) await setUserStateFields(userId, { lastMenu: String(mid) });
       await setUserState(userId, "", "main_shown", "");
       return;
     }
@@ -613,7 +497,7 @@ async function handleUpdate(update) {
       const email = state.tempData || "";
       const tid = `TICKET_${Date.now()}_${Math.floor(Math.random()*10000)}`;
       const createdAt = getNow();
-      await appendRow("Tickets", [tid, userId, email, text, "", createdAt, "", "No"]);
+      await appendRow("Tickets", [tid, userId, email, text, "", createdAt, ""]);
       await clearUserState(userId);
       // ارسال پیام تایید و دکمه بازگشت (این پیام منو ثبت نمیشود تا با زدن بازگشت منوی قبلی پاک نشود)
       await deleteMenuIfExists(userId, chatId);
@@ -666,7 +550,7 @@ async function handleUpdate(update) {
       // get user's email and save it in row (Email column after FullName)
       const userRec = await getUserById(userId);
       const email = (userRec && userRec.email) ? userRec.email : "";
-      // InvestRequests header: [RequestID,UserID,FullName,Email,TxHash,Duration,Amount,Status,Notified,CreatedAt]
+      // InvestRequests header must include Email column at index after FullName
       await appendRow("InvestRequests", [reqId, userId, fullName, email, tx, duration, amount, "Pending", "No", createdAt]);
       await clearUserState(userId);
       await deleteMenuIfExists(userId, chatId);
@@ -698,7 +582,7 @@ async function handleUpdate(update) {
       const createdAt = getNow();
       const userRec = await getUserById(userId);
       const email = (userRec && userRec.email) ? userRec.email : "";
-      // WithdrawRequests header: [RequestID,UserID,FullName,Email,WalletAddress,Amount,Status,Notified,CreatedAt]
+      // WithdrawRequests header must include Email column after FullName
       await appendRow("WithdrawRequests", [reqId, userId, fullName, email, wallet, amount, "Pending", "No", createdAt]);
       await clearUserState(userId);
       await deleteMenuIfExists(userId, chatId);
@@ -711,7 +595,7 @@ async function handleUpdate(update) {
     if (text && !step) {
       await deleteMenuIfExists(userId, chatId);
       const mid = await sendMessage(chatId, formatMessage("خوش آمدید به ربات RBI24", "لطفاً یکی از گزینه‌های زیر را انتخاب کنید:"), mainMenuKeyboard());
-      if (mid) await recordMenuMessage(userId, chatId, mid);
+      if (mid) await setUserStateFields(userId, { lastMenu: String(mid) });
       return;
     }
 
@@ -721,6 +605,118 @@ async function handleUpdate(update) {
   }
 }
 
+// ---- Webhook endpoint ----
+app.post('/webhook', async (req, res) => {
+  const update = req.body;
+  // respond early to Telegram
+  res.status(200).send('ok');
+  // process async
+  try {
+    await handleUpdate(update);
+  } catch (e) {
+    console.error('processing update failed', e);
+  }
+});
+
+app.get('/', (req, res) => res.send('RBI24 Bot running'));
+
+// ----------------- Helpers for State & Menu management -----------------
+
+// get current time string (Tehran) for human readable timestamp
+function getNow() {
+  try {
+    // format: YYYY-MM-DD HH:MM:SS (tehran time)
+    return new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Tehran' }).replace('T', ' ');
+  } catch (e) {
+    return new Date().toISOString();
+  }
+}
+
+// setUserStateFields: update specific named fields for user's State row.
+// fields: { step, tempData, lastMenu, tempEmail } - any subset allowed.
+async function setUserStateFields(userId, fields) {
+  const data = await readSheet("State");
+  let idx = -1;
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === String(userId)) { idx = i; break; }
+  }
+  if (idx === -1) {
+    // append new row with columns A:UserID, B:Step, C:TempData, D:LastMenu, E:TempEmail
+    const row = [userId,
+      fields.step || "",
+      fields.tempData || "",
+      fields.lastMenu || "",
+      fields.tempEmail || ""
+    ];
+    await appendRow("State", row);
+  } else {
+    const row = data[idx];
+    // ensure length at least 5
+    while (row.length < 5) row.push("");
+    if (fields.step !== undefined) row[1] = fields.step;
+    if (fields.tempData !== undefined) row[2] = fields.tempData;
+    if (fields.lastMenu !== undefined) row[3] = fields.lastMenu;
+    if (fields.tempEmail !== undefined) row[4] = fields.tempEmail;
+    await updateRow("State", idx + 1, row);
+  }
+}
+
+// backward-compatible wrapper: original code calls setUserState(userId, step, tempData, lastMenu, tempEmail)
+async function setUserState(userId, step = "", tempData = "", lastMenu = "", tempEmail = "") {
+  await setUserStateFields(userId, { step, tempData, lastMenu, tempEmail });
+}
+
+async function getUserState(userId) {
+  const data = await readSheet("State");
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === String(userId)) {
+      return {
+        step: data[i][1] || "",
+        tempData: data[i][2] || "",
+        lastMenu: data[i][3] || "",
+        tempEmail: data[i][4] || "",
+        rowIndex: i + 1
+      };
+    }
+  }
+  return { step: "", tempData: "", lastMenu: "", tempEmail: "" };
+}
+
+async function clearUserState(userId) {
+  const data = await readSheet("State");
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === String(userId)) {
+      await updateRow("State", i + 1, [userId, "", "", "", ""]);
+      return;
+    }
+  }
+}
+
+// delete the previously recorded menu message (if exists) — used to keep chat clean.
+// exceptMessageId: if provided, won't delete that message (useful when editing that message)
+async function deleteMenuIfExists(userId, chatId, exceptMessageId = null) {
+  try {
+    const s = await getUserState(userId);
+    const last = s.lastMenu;
+    if (last && String(last) !== String(exceptMessageId)) {
+      // try delete
+      try {
+        await telegramCall('deleteMessage', { chat_id: String(chatId), message_id: Number(last) });
+      } catch (e) {
+        // ignore if can't delete (maybe already deleted)
+      }
+      // clear lastMenu in state
+      await setUserStateFields(userId, { lastMenu: "" });
+    }
+  } catch (e) { console.error("deleteMenuIfExists error", e); }
+}
+
+// record a message id as the "current menu" for the user
+async function recordMenuMessage(userId, chatId, messageId) {
+  // delete existing menu if different
+  await deleteMenuIfExists(userId, chatId, messageId);
+  await setUserStateFields(userId, { lastMenu: String(messageId) });
+}
 
 // ----------------- Admin sync endpoint -----------------
 // Protect this route with a secret token (set ENV: ADMIN_SYNC_SECRET)
@@ -745,7 +741,7 @@ app.get('/admin/sync', async (req, res) => {
       const notified = (row[7] || "").toString().toLowerCase();
 
       if (answer && notified !== 'yes') {
-        // send answer to user with phrasing
+        // send answer to user with new phrasing
         const text = `📢 پاسخ تیکت ارسالی شما به شماره ${ticketId}\nبه شرح ذیل می‌باشد:\n\n${answer}`;
         try {
           await sendMessage(userId, text);
@@ -774,8 +770,8 @@ app.get('/admin/sync', async (req, res) => {
 
       if (status !== "Pending" && notified !== "yes") {
         let text = "";
-        if (status === "Accepted") text = `✅ درخواست سرمایه‌گذاری شما بررسی و پذیرفته شد.\nشماره درخواست: ${reqId}\nمبلغ: ${amount}\nمدت: ${duration}\nبا تشکر.`;
-        else if (status === "Rejected") text = `❌ متاسفانه درخواست سرمایه‌گذاری شما (${reqId}) رد شد.\nبرای اطلاعات بیشتر با پشتیبانی تماس بگیرید.`;
+        if (status === "Accepted") text = `✅ درخواست سرمایه‌گذاری شما (${reqId}) تایید شد.\nمبلغ: ${amount}\nمدت: ${duration}\nبا تشکر.`;
+        else if (status === "Rejected") text = `❌ متاسفانه درخواست سرمایه‌گذاری شما (${reqId}) رد شد.\nبا پشتیبانی تماس بگیرید.`;
         else text = `✅درخواست شما توسط کارشناسان ما بررسی شد.\nشماره درخواست: ${reqId}\nنتیجه ی درخواست = ${status}`;
         try { await sendMessage(userId, text); } catch(e){ console.error("notify invest user failed", e); }
         // set Notified = Yes and keep CreatedAt
@@ -815,20 +811,6 @@ app.get('/admin/sync', async (req, res) => {
   }
 });
 
-
-// ---- Webhook endpoint & main ----
-app.post('/webhook', async (req, res) => {
-  const update = req.body;
-  res.status(200).send('ok');
-  try {
-    await handleUpdate(update);
-  } catch (e) {
-    console.error('processing update failed', e);
-  }
-});
-
-app.get('/', (req, res) => res.send('RBI24 Bot running'));
-
 async function main() {
   await initSheetsClient();
   await ensureSheetHeaders();
@@ -838,5 +820,5 @@ async function main() {
 main().catch(err => {
   console.error('Fatal error during startup', err);
   process.exit(1);
+
 });
-}
