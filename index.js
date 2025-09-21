@@ -164,19 +164,24 @@ async function getUserById(userId) {
 }
 
 // register or update user
+// ----------------- registerOrUpdateUser (uses getNow() for JoinedAt) -----------------
 async function registerOrUpdateUser(userId, firstName, lastName, username, email) {
   const data = await readSheet("Users");
   const idx = findIndexByFirstCol(data, userId);
-  const now = new Date().toISOString();
+  const now = getNow(); // uses Asia/Tehran formatting
   if (idx > -1) {
     const row = data[idx];
     // update columns 2..5
     row[1] = username || row[1] || "";
     row[2] = firstName || row[2] || "";
     row[3] = lastName || row[3] || "";
+    // only overwrite email if provided (so we don't wipe existing email with null)
     if (email) row[4] = email;
+    // keep original JoinedAt if exists, otherwise set
+    if (!row[5] || String(row[5]).trim() === "") row[5] = now;
     await updateRow("Users", idx + 1, row);
   } else {
+    // append new user with JoinedAt = now
     await appendRow("Users", [userId, username || "", firstName || "", lastName || "", email || "", now]);
   }
 }
@@ -822,3 +827,4 @@ main().catch(err => {
   process.exit(1);
 
 });
+
