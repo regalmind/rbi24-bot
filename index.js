@@ -558,14 +558,14 @@ async function handleUpdate(update) {
       const fn = text.trim();
       await setUserStateFields(userId, { step: "awaiting_withdraw_wallet", tempData: fn });
       await deleteMenuIfExists(userId, chatId);
-      await sendMessage(chatId, formatMessage("درخواست برداشت", "لطفا آدرس ولت USDT شبکه BEP20 را وارد نمایید."));
+      await sendMessage(chatId, formatMessage("درخواست برداشت", "📌 لطفا آدرس ولت USDT شبکه BEP20 را وارد نمایید.\n\nتوجه بسیار مهم: حتماً آدرس را در شبکه BEP20 وارد کنید. در صورت ارسال آدرس اشتباه یا ارسال در شبکه‌ای غیر از BEP20، سرمایه شما از بین خواهد رفت و مسئولیت تراکنش نادرست بر عهدهٔ شما می‌باشد. لطفاً آدرس را با دقت وارد کنید."));
       return;
     } else if (step === "awaiting_withdraw_wallet" && text) {
       const wallet = text.trim();
       const prev = state.tempData || "";
       await setUserStateFields(userId, { step: "awaiting_withdraw_amount", tempData: `${prev}||${wallet}` });
       await deleteMenuIfExists(userId, chatId);
-      await sendMessage(chatId, formatMessage("درخواست برداشت", "📌 لطفا آدرس ولت USDT شبکه BEP20 را وارد نمایید.\n\nتوجه بسیار مهم: حتماً آدرس را در شبکه BEP20 وارد کنید. در صورت ارسال آدرس اشتباه یا ارسال در شبکه‌ای غیر از BEP20، سرمایه شما از بین خواهد رفت و مسئولیت تراکنش نادرست بر عهدهٔ شما می‌باشد. لطفاً آدرس را با دقت وارد کنید."));
+      await sendMessage(chatId, formatMessage("درخواست برداشت", "لطفا مبلغ مورد نظر جهت برداشت را به اعداد لاتین وارد نمایید."));
       return;
     } else if (step === "awaiting_withdraw_amount" && text) {
       const amount = text.trim();
@@ -764,9 +764,9 @@ app.get('/admin/sync', async (req, res) => {
 
       if (status !== "Pending" && notified !== "yes") {
         let text = "";
-        if (status === "Accepted") text = `✅درخواست شما توسط کارشناسان ما بررسی شد.\nشماره درخواست: ${reqId}\nنتیجه ی درخواست = ${status}`;
-        else if (status === "Rejected") text = `✅درخواست شما توسط کارشناسان ما بررسی شد.\nشماره درخواست: ${reqId}\nنتیجه ی درخواست = ${status}`;
-        else text = `اطلاعیه درباره درخواست ${reqId}: وضعیت = ${status}`;
+        if (status === "Accepted") text = `✅ درخواست سرمایه‌گذاری شما (${reqId}) تایید شد.\nمبلغ: ${amount}\nمدت: ${duration}\nبا تشکر.`;
+        else if (status === "Rejected") text = `❌ متاسفانه درخواست سرمایه‌گذاری شما (${reqId}) رد شد.\nبا پشتیبانی تماس بگیرید.`;
+        else text = `✅درخواست شما توسط کارشناسان ما بررسی شد.\nشماره درخواست: ${reqId}\nنتیجه ی درخواست = ${status}`;
         try { await sendMessage(userId, text); } catch(e){ console.error("notify invest user failed", e); }
         // set Notified = Yes and keep CreatedAt
         await updateRow("InvestRequests", i + 1, [reqId, userId, fullName, email, tx, duration, amount, status, "Yes", createdAt || getNow()]);
@@ -790,9 +790,9 @@ app.get('/admin/sync', async (req, res) => {
 
       if (status !== "Pending" && notified !== "yes") {
         let text = "";
-        if (status === "Accepted") text = `✅درخواست شما توسط کارشناسان ما بررسی شد.\nشماره درخواست: ${reqId}\nنتیجه ی درخواست = ${status}\nمبلغ: ${amount}\nآدرس: ${wallet}`;
-        else if (status === "Rejected") text = `✅درخواست شما توسط کارشناسان ما بررسی شد.\nشماره درخواست: ${reqId}\nنتیجه ی درخواست = ${status}`;
-        else text = `اطلاعیه درباره برداشت ${reqId}: وضعیت = ${status}`;
+        if (status === "Accepted") text = `✅درخواست شما توسط کارشناسان ما بررسی و پرداخت شد.\nشماره درخواست: ${reqId}\nنتیجه ی درخواست = ${status}\nمبلغ: ${amount}\nآدرس: ${wallet}`;
+        else if (status === "Rejected") text = `❌ درخواست برداشت شما (${reqId}) رد شد. لطفاً با پشتیبانی تماس بگیرید.`;
+        else text = `✅درخواست شما توسط کارشناسان ما بررسی شد.\nشماره درخواست: ${reqId}\nنتیجه ی درخواست = ${status}`;
         try { await sendMessage(userId, text); } catch (e) { console.error("notify withdraw user failed", e); }
         await updateRow("WithdrawRequests", i + 1, [reqId, userId, fullName, email, wallet, amount, status, "Yes", createdAt || getNow()]);
       }
@@ -816,6 +816,7 @@ main().catch(err => {
   process.exit(1);
 
 });
+
 
 
 
