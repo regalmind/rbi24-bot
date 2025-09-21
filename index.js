@@ -734,7 +734,7 @@ app.get('/admin/sync', async (req, res) => {
       const notified = row[7] || row[8] || ""; // tolerate different layouts
       if (answer && (!notified || String(notified).toLowerCase() === 'no')) {
         // send answer to user
-        const text = `✅درخواست شما توسط کارشناسان ما بررسی شد.\nشماره درخواست: ${reqId}\nنتیجه ی درخواست = ${status}`;
+        const text = `📢 پاسخ تیکت ارسالی شما به شماره ${ticketId}\nبه شرح ذیل می‌باشد:\n\n${answer}`;
         try {
           await sendMessage(userId, text);
         } catch (e) { console.error("send ticket answer failed", e); }
@@ -810,5 +810,6 @@ main().catch(err => {
   process.exit(1);
 
 });
+
 
 
