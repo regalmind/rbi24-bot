@@ -80,7 +80,7 @@ async function ensureSheetHeaders() {
   const meta = [
     { name: "Users", headers: ["UserID", "Username", "FirstName", "LastName", "Email", "JoinedAt"] },
     { name: "State", headers: ["UserID", "Step", "TempData", "LastMenu", "TempEmail"] },
-    { name: "Tickets", headers: ["TicketID", "UserID", "Email", "Message", "Answer", "CreatedAt", "AnsweredAt"] },
+    { name: "Tickets", headers: ["TicketID", "UserID", "Email", "Message", "Answer", "CreatedAt", "AnsweredAt", "Notified"] },
     { name: "EmailLog", headers: ["UserID", "Email", "Count", "LastSentAt"] },
     { name: "InvestRequests", headers: ["RequestID", "UserID", "FullName", "Email", "TxHash", "Duration", "Amount", "Status", "Notified", "CreatedAt"] },
     { name: "WithdrawRequests", headers: ["RequestID", "UserID", "FullName", "Email", "WalletAddress", "Amount", "Status", "Notified", "CreatedAt"] },
@@ -565,7 +565,7 @@ async function handleUpdate(update) {
       const prev = state.tempData || "";
       await setUserStateFields(userId, { step: "awaiting_withdraw_amount", tempData: `${prev}||${wallet}` });
       await deleteMenuIfExists(userId, chatId);
-      await sendMessage(chatId, formatMessage("درخواست برداشت", "لطفا مبلغ مورد نظر جهت برداشت را وارد نمایید."));
+      await sendMessage(chatId, formatMessage("درخواست برداشت", "📌 لطفا آدرس ولت USDT شبکه BEP20 را وارد نمایید.\n\nتوجه بسیار مهم: حتماً آدرس را در شبکه BEP20 وارد کنید. در صورت ارسال آدرس اشتباه یا ارسال در شبکه‌ای غیر از BEP20، سرمایه شما از بین خواهد رفت و مسئولیت تراکنش نادرست بر عهدهٔ شما می‌باشد. لطفاً آدرس را با دقت وارد کنید."));
       return;
     } else if (step === "awaiting_withdraw_amount" && text) {
       const amount = text.trim();
@@ -720,75 +720,81 @@ app.get('/admin/sync', async (req, res) => {
     return res.status(403).send('Forbidden');
   }
   try {
-    // 1) Tickets: send answers
+    // ----- Tickets -----
     const tickets = await readSheet("Tickets");
-    // header expected: ["TicketID","UserID","Email","Message","Answer","CreatedAt","AnsweredAt"]
+    // headers: ["TicketID","UserID","Email","Message","Answer","CreatedAt","AnsweredAt","Notified"]
     for (let i = 1; i < tickets.length; i++) {
       const row = tickets[i];
       const ticketId = row[0];
       const userId = row[1];
-      const email = row[2];
-      const message = row[3];
+      const email = row[2] || "";
+      const message = row[3] || "";
       const answer = row[4] || "";
+      const createdAt = row[5] || "";
       const answeredAt = row[6] || "";
-      const notified = row[7] || row[8] || ""; // tolerate different layouts
-      if (answer && (!notified || String(notified).toLowerCase() === 'no')) {
-        // send answer to user
+      const notified = (row[7] || "").toString().toLowerCase();
+
+      if (answer && notified !== 'yes') {
+        // send answer to user with new phrasing
         const text = `📢 پاسخ تیکت ارسالی شما به شماره ${ticketId}\nبه شرح ذیل می‌باشد:\n\n${answer}`;
         try {
           await sendMessage(userId, text);
         } catch (e) { console.error("send ticket answer failed", e); }
-        // update sheet: Notified = Yes, AnsweredAt = now
         const now = getNow();
-        // ensure length then update: we will update columns F (CreatedAt) stays, G (AnsweredAt) index 6
-        await updateRow("Tickets", i + 1, [ticketId, userId, email, message, answer, row[5] || "", now]);
+        // update AnsweredAt and Notified
+        await updateRow("Tickets", i + 1, [ticketId, userId, email, message, answer, createdAt || "", now, "Yes"]);
       }
     }
 
-    // 2) InvestRequests: notify when status changed (Pending -> Accepted/Rejected)
+    // ----- InvestRequests -----
     const invests = await readSheet("InvestRequests");
-    // headers: ["RequestID","UserID","FullName","TxHash","Duration","Amount","Status","Notified","CreatedAt"]
+    // headers: ["RequestID","UserID","FullName","Email","TxHash","Duration","Amount","Status","Notified","CreatedAt"]
     for (let i = 1; i < invests.length; i++) {
       const row = invests[i];
       const reqId = row[0];
       const userId = row[1];
       const fullName = row[2] || "";
-      const tx = row[3] || "";
-      const duration = row[4] || "";
-      const amount = row[5] || "";
-      const status = (row[6] || "Pending").trim();
-      const notified = (row[7] || "").toString().toLowerCase();
+      const email = row[3] || "";
+      const tx = row[4] || "";
+      const duration = row[5] || "";
+      const amount = row[6] || "";
+      const status = (row[7] || "Pending").trim();
+      const notified = (row[8] || "").toString().toLowerCase();
+      const createdAt = row[9] || "";
+
       if (status !== "Pending" && notified !== "yes") {
-        // notify user
         let text = "";
-        if (status === "Accepted") text = `✅ درخواست سرمایه‌گذاری شما (${reqId}) تایید شد.\nمبلغ: ${amount}\nمدت: ${duration}\nبا تشکر.`;
-        else if (status === "Rejected") text = `❌ متاسفانه درخواست سرمایه‌گذاری شما (${reqId}) رد شد.\nبا پشتیبانی تماس بگیرید.`;
+        if (status === "Accepted") text = `✅درخواست شما توسط کارشناسان ما بررسی شد.\nشماره درخواست: ${reqId}\nنتیجه ی درخواست = ${status}`;
+        else if (status === "Rejected") text = `✅درخواست شما توسط کارشناسان ما بررسی شد.\nشماره درخواست: ${reqId}\nنتیجه ی درخواست = ${status}`;
         else text = `اطلاعیه درباره درخواست ${reqId}: وضعیت = ${status}`;
         try { await sendMessage(userId, text); } catch(e){ console.error("notify invest user failed", e); }
-        // update Notified and optionally a NotifiedAt column: we'll set Notified = Yes and keep CreatedAt
-        await updateRow("InvestRequests", i + 1, [reqId, userId, fullName, tx, duration, amount, status, "Yes", row[8] || getNow()]);
+        // set Notified = Yes and keep CreatedAt
+        await updateRow("InvestRequests", i + 1, [reqId, userId, fullName, email, tx, duration, amount, status, "Yes", createdAt || getNow()]);
       }
     }
 
-    // 3) WithdrawRequests: similar logic
+    // ----- WithdrawRequests -----
     const wds = await readSheet("WithdrawRequests");
-    // headers: ["RequestID","UserID","FullName","WalletAddress","Amount","Status","Notified","CreatedAt"]
+    // headers: ["RequestID","UserID","FullName","Email","WalletAddress","Amount","Status","Notified","CreatedAt"]
     for (let i = 1; i < wds.length; i++) {
       const row = wds[i];
       const reqId = row[0];
       const userId = row[1];
-      const fullname = row[2] || "";
-      const wallet = row[3] || "";
-      const amount = row[4] || "";
-      const status = (row[5] || "Pending").trim();
-      const notified = (row[6] || "").toString().toLowerCase();
+      const fullName = row[2] || "";
+      const email = row[3] || "";
+      const wallet = row[4] || "";
+      const amount = row[5] || "";
+      const status = (row[6] || "Pending").trim();
+      const notified = (row[7] || "").toString().toLowerCase();
+      const createdAt = row[8] || "";
+
       if (status !== "Pending" && notified !== "yes") {
         let text = "";
-        if (status === "Accepted") text = `✅ درخواست برداشت شما (${reqId}) تایید و پرداخت شد.\nمبلغ: ${amount}\nآدرس: ${wallet}`;
-        else if (status === "Rejected") text = `❌ درخواست برداشت شما (${reqId}) رد شد. لطفاً با پشتیبانی تماس بگیرید.`;
+        if (status === "Accepted") text = `✅درخواست شما توسط کارشناسان ما بررسی شد.\nشماره درخواست: ${reqId}\nنتیجه ی درخواست = ${status}\nمبلغ: ${amount}\nآدرس: ${wallet}`;
+        else if (status === "Rejected") text = `✅درخواست شما توسط کارشناسان ما بررسی شد.\nشماره درخواست: ${reqId}\nنتیجه ی درخواست = ${status}`;
         else text = `اطلاعیه درباره برداشت ${reqId}: وضعیت = ${status}`;
         try { await sendMessage(userId, text); } catch (e) { console.error("notify withdraw user failed", e); }
-        await updateRow("WithdrawRequests", i + 1, [reqId, userId, fullname, wallet, amount, status, "Yes", row[7] || getNow()]);
+        await updateRow("WithdrawRequests", i + 1, [reqId, userId, fullName, email, wallet, amount, status, "Yes", createdAt || getNow()]);
       }
     }
 
@@ -810,6 +816,7 @@ main().catch(err => {
   process.exit(1);
 
 });
+
 
 
 
