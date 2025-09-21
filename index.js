@@ -790,7 +790,7 @@ app.get('/admin/sync', async (req, res) => {
 
       if (status !== "Pending" && notified !== "yes") {
         let text = "";
-        if (status === "Accepted") text = `✅درخواست شما توسط کارشناسان ما بررسی و پرداخت شد.\nشماره درخواست: ${reqId}\nنتیجه ی درخواست = ${status}\nمبلغ: ${amount}\nآدرس: ${wallet}`;
+        if (status === "Accepted") text = `✅درخواست برداشت شما بررسی و پرداخت شد.\nشماره درخواست: ${reqId}\nنتیجه ی درخواست = ${status}\nمبلغ: ${amount}\nآدرس: ${wallet}`;
         else if (status === "Rejected") text = `❌ درخواست برداشت شما (${reqId}) رد شد. لطفاً با پشتیبانی تماس بگیرید.`;
         else text = `✅درخواست شما توسط کارشناسان ما بررسی شد.\nشماره درخواست: ${reqId}\nنتیجه ی درخواست = ${status}`;
         try { await sendMessage(userId, text); } catch (e) { console.error("notify withdraw user failed", e); }
@@ -816,6 +816,7 @@ main().catch(err => {
   process.exit(1);
 
 });
+
 
 
 
