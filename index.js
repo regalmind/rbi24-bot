@@ -319,7 +319,7 @@ async function handleUpdate(update) {
       // BACK: حذف منوی قبلی (اگر وجود داشت) ولی پیام جاری را حذف نکن و منوی اصلی را به صورت NEW ارسال کن
       if (cd === "back_to_main") {
         await deleteMenuIfExists(userId, chatId, callback.message.message_id); // حذف منوی قبلی (نه پیام جاری)
-        const mid = await sendMessage(chatId, formatMessage("خوش آمدید به ربات RBI24", "لطفاً یکی از گزینه‌ها را انتخاب کنید:"), mainMenuKeyboard());
+        const mid = await sendMessage(chatId, formatMessage("خوش آمدید به ربات پارسی زبان RBI24", "لطفاً یکی از گزینه‌ها را انتخاب کنید:"), mainMenuKeyboard());
         if (mid) await setUserStateFields(userId, { lastMenu: String(mid) });
         await setUserState(userId, "", "main_shown", "");
         return;
@@ -816,6 +816,7 @@ main().catch(err => {
   process.exit(1);
 
 });
+
 
 
 
