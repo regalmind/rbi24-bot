@@ -1,4 +1,3 @@
-
 FROM node:18-slim
 
 WORKDIR /usr/src/app
@@ -11,7 +10,3 @@ COPY . .
 ENV PORT=8080
 EXPOSE 8080
 CMD ["npm", "start"]
-
-# Server Configuration
-PORT=8080
-
