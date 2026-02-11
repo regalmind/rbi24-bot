@@ -104,6 +104,14 @@ async function ensureSheetHeaders() {
     {
       name: "TicketRateLimits",
       headers: ["UserID", "Count", "LastTicketAt"]
+    },
+    {
+      name: "Lessons",
+      headers: ["ID", "Key", "Title", "TextContent", "VideoLink", "IsActive"]
+    },
+    {
+      name: "FilteredBroadcast",
+      headers: ["BroadcastID", "TargetUserIDs", "Message", "SentAt", "SentCount"]
     }
   ];
 
@@ -256,9 +264,8 @@ function formatMessage(title, content, footer) {
 function mainMenuKeyboard() {
   return {
     inline_keyboard: [
-      [{ text: "📚 آموزش‌ها و چنل‌ها", callback_data: "edu_channels" }],
-      [{ text: "📢 آخرین اطلاعیه‌ها", callback_data: "announcements" }],
-      [{ text: "❓ سوالات متداول (FAQ)", callback_data: "faq_menu" }],
+      [{ text: "📖 آموزش‌های اولیه", callback_data: "edu_initial" }],
+      [{ text: "❓ سوالات متداول", callback_data: "faq_menu" }],
       [{ text: "🛟 پشتیبانی", callback_data: "support_menu" }],
       [{ text: "ℹ️ درباره ما", callback_data: "about_menu" }]
     ]
@@ -275,14 +282,63 @@ function supportMenuKeyboard() {
   };
 }
 
+function eduInitialKeyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: "👜 نحوه نصب ولت نرم‌افزاری", callback_data: "lesson_wallet_install" }],
+      [{ text: "💸 دریافت و انتقال ارز از ولت شخصی", callback_data: "lesson_wallet_transfer" }],
+      [{ text: "🏦 نحوه خرید ارز از صرافی دیجیتال", callback_data: "lesson_exchange_buy" }],
+      [{ text: "💰 نحوه فروش ارز به صرافی دیجیتال", callback_data: "lesson_exchange_sell" }],
+      [{ text: "📋 ثبت‌نام و احراز هویت در صندوق", callback_data: "lesson_fund_register" }],
+      [{ text: "📝 نحوه بستن قرارداد جدید در صندوق", callback_data: "lesson_fund_contract" }],
+      [{ text: "🏧 نحوه برداشت سود و کمیسیون", callback_data: "lesson_withdraw_profit" }],
+      [{ text: "🔐 فعال‌سازی کد دو عاملی گوگل", callback_data: "lesson_2fa" }],
+      [{ text: "🆔 نحوه استفاده از پوزیشن آیدی", callback_data: "lesson_position_id" }],
+      [{ text: "↩️ بازگشت به منوی اصلی", callback_data: "back_to_main" }]
+    ]
+  };
+}
+
+function faqMenuKeyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: "🏦 درباره صندوق", callback_data: "faq_about_fund" }],
+      [{ text: "📈 سود و کمیسیون", callback_data: "faq_profit" }],
+      [{ text: "🔒 امنیت و قوانین", callback_data: "faq_security" }],
+      [{ text: "📞 پشتیبانی", callback_data: "faq_support" }],
+      [{ text: "↩️ بازگشت به منوی اصلی", callback_data: "back_to_main" }]
+    ]
+  };
+}
+
+function aboutMenuKeyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: "🎯 ماموریت ما", callback_data: "about_mission" }],
+      [{ text: "🏗️ ساختار سازمانی", callback_data: "about_structure" }],
+      [{ text: "📜 قوانین و مقررات", callback_data: "about_rules" }],
+      [{ text: "📡 کانال‌های رسمی", callback_data: "about_channels" }],
+      [{ text: "↩️ بازگشت به منوی اصلی", callback_data: "back_to_main" }]
+    ]
+  };
+}
+
 function adminMenuKeyboard() {
   return {
     inline_keyboard: [
-      [{ text: "📊 آمار سیستم", callback_data: "admin_stats" }],
-      [{ text: "📢 ارسال پیام همگانی", callback_data: "admin_broadcast" }],
-      [{ text: "🎫 مشاهده تیکت‌های باز", callback_data: "admin_tickets" }],
-      [{ text: "💾 بکاپ دیتابیس", callback_data: "admin_backup" }],
-      [{ text: "↩️ بستن منو", callback_data: "admin_close" }]
+      [
+        { text: "📊 آمار", callback_data: "admin_stats" },
+        { text: "🎫 تیکت‌های باز", callback_data: "admin_tickets" }
+      ],
+      [
+        { text: "📢 پیام همگانی", callback_data: "admin_broadcast" },
+        { text: "🎯 پیام فیلتر شده", callback_data: "admin_filtered_broadcast" }
+      ],
+      [
+        { text: "📋 مدیریت اطلاعیه", callback_data: "admin_announcements" },
+        { text: "💾 بکاپ دیتابیس", callback_data: "admin_backup" }
+      ],
+      [{ text: "❌ بستن پنل", callback_data: "admin_close" }]
     ]
   };
 }
@@ -549,6 +605,70 @@ async function canSendTicket(userId) {
   return true;
 }
 
+async function getLessonByKey(key) {
+  try {
+    const data = await readSheet("Lessons");
+    for (let i = 1; i < data.length; i++) {
+      if (String(data[i][1]) === String(key)) {
+        return {
+          id: data[i][0],
+          key: data[i][1],
+          title: data[i][2] || "",
+          textContent: data[i][3] || "",
+          videoLink: data[i][4] || "",
+          isActive: (data[i][5] || "Yes").toString().toLowerCase() === "yes"
+        };
+      }
+    }
+  } catch (e) {
+    console.error("getLessonByKey error:", e.message);
+  }
+  return null;
+}
+
+async function sendLesson(chatId, messageId, lessonKey, lessonTitle) {
+  const lesson = await getLessonByKey(lessonKey);
+  const backBtn = { inline_keyboard: [[{ text: "↩️ بازگشت به آموزش‌ها", callback_data: "edu_initial" }]] };
+
+  if (!lesson) {
+    // درس هنوز در شیت تعریف نشده
+    await editMessageText(chatId, messageId,
+      formatMessage(lessonTitle,
+        "📌 محتوای این آموزش به زودی آماده می‌شود.\n\nاز شکیبایی شما سپاسگزاریم 🙏\n— تیم RBI24"
+      ),
+      backBtn
+    );
+    return;
+  }
+
+  if (!lesson.isActive) {
+    await editMessageText(chatId, messageId,
+      formatMessage(lesson.title || lessonTitle,
+        "⏳ این آموزش در حال آماده‌سازی است.\n\nبه زودی در دسترس خواهد بود 🙏"
+      ),
+      backBtn
+    );
+    return;
+  }
+
+  let content = lesson.textContent || "محتوا موجود نیست.";
+
+  // اگه ویدیو داشت، دکمه ویدیو اضافه کن
+  const keyboard = { inline_keyboard: [] };
+  if (lesson.videoLink && lesson.videoLink.trim() !== "") {
+    keyboard.inline_keyboard.push([
+      { text: "🎬 مشاهده ویدیو آموزشی", url: lesson.videoLink }
+    ]);
+  }
+  keyboard.inline_keyboard.push([
+    { text: "↩️ بازگشت به آموزش‌ها", callback_data: "edu_initial" }
+  ]);
+
+  await editMessageText(chatId, messageId,
+    formatMessage(lesson.title || lessonTitle, content),
+    keyboard
+  );
+}
 
 // ========================================
 // MAIN UPDATE HANDLER
@@ -589,35 +709,89 @@ async function handleUpdate(update) {
       await answerCallbackQuery(callback.id);
       const cd = callback.data;
 
-      // --- ADMIN COMMANDS (only for ADMIN_CHAT_ID) ---
+      // --- ADMIN PANEL ---
       if (String(userId) === String(ADMIN_CHAT_ID)) {
+
         if (cd === "admin_stats") {
           await handleAdminStats(chatId, callback.message.message_id);
           return;
         }
-        
+
         if (cd === "admin_broadcast") {
-          await editMessageText(chatId, callback.message.message_id, 
-            formatMessage("ارسال پیام همگانی", "لطفاً متن پیام خود را ارسال کنید:"), 
+          await editMessageText(chatId, callback.message.message_id,
+            formatMessage("📢 پیام همگانی",
+              "متن پیامی که میخوای به <b>همه کاربران</b> ارسال بشه رو بفرست:\n\n" +
+              "⚠️ این پیام برای تمام کاربران ثبت‌نام شده ارسال خواهد شد."
+            ),
             { inline_keyboard: [[{ text: "❌ لغو", callback_data: "admin_close" }]] }
           );
           await setUserStateFields(userId, { step: "awaiting_broadcast_message" });
           return;
         }
-        
+
+        if (cd === "admin_filtered_broadcast") {
+          await editMessageText(chatId, callback.message.message_id,
+            formatMessage("🎯 پیام فیلتر شده",
+              "لطفاً <b>ID کاربران</b> مورد نظر را ارسال کنید.\n\n" +
+              "فرمت: هر ID در یک خط جداگانه:\n\n" +
+              "<code>123456789\n987654321\n111222333</code>\n\n" +
+              "یا با کاما جدا کنید:\n" +
+              "<code>123456789, 987654321, 111222333</code>"
+            ),
+            { inline_keyboard: [[{ text: "❌ لغو", callback_data: "admin_close" }]] }
+          );
+          await setUserStateFields(userId, { step: "awaiting_filtered_ids" });
+          return;
+        }
+
         if (cd === "admin_tickets") {
           await handleAdminViewTickets(chatId, callback.message.message_id);
           return;
         }
-        
+
         if (cd === "admin_backup") {
           await handleAdminBackup(chatId);
-          await answerCallbackQuery(callback.id, "بکاپ در حال ارسال...");
           return;
         }
-        
+
+        if (cd === "admin_announcements") {
+          await editMessageText(chatId, callback.message.message_id,
+            formatMessage("📋 مدیریت اطلاعیه",
+              "برای افزودن اطلاعیه جدید، متن زیر را ارسال کنید:\n\n" +
+              "<code>/announce عنوان | متن اطلاعیه</code>\n\n" +
+              "مثال:\n" +
+              "<code>/announce آپدیت سیستم | سیستم فردا ساعت ۲۲ آپدیت می‌شود</code>"
+            ),
+            { inline_keyboard: [[{ text: "❌ بستن", callback_data: "admin_close" }]] }
+          );
+          return;
+        }
+
         if (cd === "admin_close") {
           await deleteMessage(chatId, callback.message.message_id);
+          await clearUserState(userId);
+          return;
+        }
+
+        // پاسخ تیکت با دکمه
+        if (cd && cd.startsWith("admin_reply_ticket_")) {
+          const ticketId = cd.replace("admin_reply_ticket_", "");
+          await setUserStateFields(userId, { step: "awaiting_ticket_reply", tempData: ticketId });
+          await editMessageText(chatId, callback.message.message_id,
+            formatMessage("✍️ پاسخ به تیکت",
+              `شماره تیکت: <code>${ticketId}</code>\n\nمتن پاسخ خود را تایپ کنید:`
+            ),
+            { inline_keyboard: [[{ text: "❌ لغو", callback_data: "admin_cancel_reply" }]] }
+          );
+          return;
+        }
+
+        if (cd === "admin_cancel_reply") {
+          await clearUserState(userId);
+          await editMessageText(chatId, callback.message.message_id,
+            formatMessage("پنل ادمین", "عملیات لغو شد."),
+            adminMenuKeyboard()
+          );
           return;
         }
       }
@@ -625,8 +799,8 @@ async function handleUpdate(update) {
       // --- BACK TO MAIN ---
       if (cd === "back_to_main") {
         await deleteMenuIfExists(userId, chatId, callback.message.message_id);
-        const mid = await sendMessage(chatId, 
-          formatMessage("منوی اصلی RBI24", `سلام ${firstName} عزیز 👋\n\nلطفاً یکی از گزینه‌های زیر را انتخاب کنید:`), 
+        const mid = await sendMessage(chatId,
+          formatMessage("منوی اصلی RBI24", `سلام ${firstName} عزیز 👋\n\nلطفاً یکی از گزینه‌های زیر را انتخاب کنید:`),
           mainMenuKeyboard()
         );
         if (mid) await setUserStateFields(userId, { lastMenu: String(mid) });
@@ -636,113 +810,201 @@ async function handleUpdate(update) {
 
       if (cd === "back_to_main_send") {
         await deleteMenuIfExists(userId, chatId);
-        const mid = await sendMessage(chatId, 
-          formatMessage("منوی اصلی RBI24", `سلام ${firstName} عزیز 👋\n\nلطفاً یکی از گزینه‌های زیر را انتخاب کنید:`), 
+        const mid = await sendMessage(chatId,
+          formatMessage("منوی اصلی RBI24", `سلام ${firstName} عزیز 👋\n\nلطفاً یکی از گزینه‌های زیر را انتخاب کنید:`),
           mainMenuKeyboard()
         );
         if (mid) await setUserStateFields(userId, { lastMenu: String(mid) });
-        await logUserAction(userId, "back_to_main_send");
         return;
       }
 
-      // --- EDUCATION & CHANNELS ---
-      if (cd === "edu_channels") {
-        const content = `📚 <b>چنل‌های آموزشی RBI24</b>\n\n` +
-          `🔹 چنل Starter: ${CHANNELS.starter}\n` +
-          `🔹 چنل Supporter: ${CHANNELS.supporter}\n` +
-          `🔹 چنل Doer: ${CHANNELS.doer}\n` +
-          `🔹 چنل Advisor: ${CHANNELS.advisor}\n\n` +
-          `💡 لطفاً بر اساس رنک خود، در چنل مربوطه عضو شوید.\n` +
-          `تمام آموزش‌ها در چنل‌ها منتشر می‌شود.`;
-        
-        await editMessageText(chatId, callback.message.message_id, 
-          formatMessage("آموزش‌ها و چنل‌ها", content), 
-          { inline_keyboard: [[{ text: "↩️ بازگشت", callback_data: "back_to_main" }]] }
+      // --- آموزش‌های اولیه ---
+      if (cd === "edu_initial") {
+        await editMessageText(chatId, callback.message.message_id,
+          formatMessage("📖 آموزش‌های اولیه",
+            "یکی از موضوعات آموزشی زیر را انتخاب کنید:"
+          ),
+          eduInitialKeyboard()
         );
         await setUserStateFields(userId, { lastMenu: String(callback.message.message_id) });
-        await logUserAction(userId, "viewed_channels");
+        await logUserAction(userId, "opened_edu_initial");
         return;
       }
 
-      // --- ANNOUNCEMENTS ---
-      if (cd === "announcements") {
-        const announcements = await readSheet("Announcements");
-        let content = "";
-        
-        let count = 0;
-        for (let i = announcements.length - 1; i >= 1 && count < 3; i--) {
-          const row = announcements[i];
-          const isActive = (row[4] || "").toString().toLowerCase();
-          
-          if (isActive === "yes") {
-            const title = row[1] || "بدون عنوان";
-            const msg = row[2] || "";
-            const date = row[3] || "";
-            content += `📌 <b>${title}</b>\n${msg}\n🗓 ${date}\n\n`;
-            count++;
-          }
-        }
-        
-        if (!content) {
-          content = "در حال حاضر اطلاعیه‌ای موجود نیست.";
-        }
-        
-        await editMessageText(chatId, callback.message.message_id, 
-          formatMessage("آخرین اطلاعیه‌ها", content), 
-          { inline_keyboard: [[{ text: "↩️ بازگشت", callback_data: "back_to_main" }]] }
-        );
+      // --- درس‌های آموزشی ---
+      const lessonMap = {
+        "lesson_wallet_install":   "نحوه نصب ولت نرم‌افزاری",
+        "lesson_wallet_transfer":  "دریافت و انتقال ارز از ولت شخصی",
+        "lesson_exchange_buy":     "نحوه خرید ارز از صرافی دیجیتال",
+        "lesson_exchange_sell":    "نحوه فروش ارز به صرافی دیجیتال",
+        "lesson_fund_register":    "ثبت‌نام و احراز هویت در صندوق",
+        "lesson_fund_contract":    "نحوه بستن قرارداد جدید در صندوق",
+        "lesson_withdraw_profit":  "نحوه برداشت سود و کمیسیون",
+        "lesson_2fa":              "فعال‌سازی کد دو عاملی گوگل",
+        "lesson_position_id":      "نحوه استفاده از پوزیشن آیدی"
+      };
+
+      if (lessonMap[cd]) {
+        await sendLesson(chatId, callback.message.message_id, cd, lessonMap[cd]);
         await setUserStateFields(userId, { lastMenu: String(callback.message.message_id) });
-        await logUserAction(userId, "viewed_announcements");
+        await logUserAction(userId, `viewed_${cd}`);
         return;
       }
 
-      // --- FAQ MENU ---
+      // --- FAQ ---
       if (cd === "faq_menu") {
-        const faqData = await readSheet("FAQ");
-        let content = "";
-        
-        if (faqData.length > 1) {
-          for (let i = 1; i < faqData.length && i <= 5; i++) {
-            const row = faqData[i];
-            const question = row[2] || "";
-            const answer = row[3] || "";
-            content += `❓ <b>${question}</b>\n💡 ${answer}\n\n`;
-          }
-        } else {
-          content = "محتوای این بخش در حال آماده‌سازی است.\nاز شکیبایی شما متشکریم.";
-        }
-        
-        await editMessageText(chatId, callback.message.message_id, 
-          formatMessage("سوالات متداول", content), 
-          { inline_keyboard: [[{ text: "↩️ بازگشت", callback_data: "back_to_main" }]] }
+        await editMessageText(chatId, callback.message.message_id,
+          formatMessage("❓ سوالات متداول", "یکی از دسته‌بندی‌های زیر را انتخاب کنید:"),
+          faqMenuKeyboard()
         );
         await setUserStateFields(userId, { lastMenu: String(callback.message.message_id) });
-        await logUserAction(userId, "viewed_faq");
+        await logUserAction(userId, "opened_faq");
+        return;
+      }
+
+      if (cd === "faq_about_fund") {
+        const content =
+          "🏦 <b>صندوق سرمایه‌گذاری RBI24 چیست؟</b>\n" +
+          "یک صندوق آموزشی-سازمانی است که هدف آن استانداردسازی آموزش و رشد مرحله‌به‌مرحله اعضا می‌باشد.\n\n" +
+          "📌 <b>چه کسانی می‌توانند عضو شوند؟</b>\n" +
+          "هر فردی که قوانین و ساختار سازمانی را بپذیرد.\n\n" +
+          "📌 <b>آیا نیاز به سرمایه اولیه است؟</b>\n" +
+          "اطلاعات کامل در کانال‌های رسمی موجود است.";
+        await editMessageText(chatId, callback.message.message_id,
+          formatMessage("درباره صندوق", content),
+          { inline_keyboard: [[{ text: "↩️ بازگشت به FAQ", callback_data: "faq_menu" }]] }
+        );
+        await setUserStateFields(userId, { lastMenu: String(callback.message.message_id) });
+        return;
+      }
+
+      if (cd === "faq_profit") {
+        const content =
+          "💰 <b>نحوه محاسبه سود چگونه است؟</b>\n" +
+          "جزئیات کامل در کانال رسمی آموزش‌ها موجود است.\n\n" +
+          "📌 <b>کمیسیون چیست؟</b>\n" +
+          "کمیسیون بر اساس ساختار سازمانی و رنک شما محاسبه می‌شود.\n\n" +
+          "📌 <b>زمان‌بندی پرداخت؟</b>\n" +
+          "اطلاعیه‌های رسمی از طریق کانال‌ها اعلام می‌شود.";
+        await editMessageText(chatId, callback.message.message_id,
+          formatMessage("سود و کمیسیون", content),
+          { inline_keyboard: [[{ text: "↩️ بازگشت به FAQ", callback_data: "faq_menu" }]] }
+        );
+        await setUserStateFields(userId, { lastMenu: String(callback.message.message_id) });
+        return;
+      }
+
+      if (cd === "faq_security") {
+        const content =
+          "🔒 <b>آیا اطلاعات من امن است؟</b>\n" +
+          "بله، اطلاعات شما فقط برای تایید هویت استفاده می‌شود.\n\n" +
+          "📌 <b>قوانین مهم:</b>\n" +
+          "• هیچ‌کس از طرف RBI24 رمز یا ولت شما را نمی‌خواهد\n" +
+          "• تراکنش‌ها فقط از طریق کانال رسمی اطلاع‌رسانی می‌شود\n" +
+          "• در صورت مشاهده رفتار مشکوک فوراً تیکت ارسال کنید";
+        await editMessageText(chatId, callback.message.message_id,
+          formatMessage("امنیت و قوانین", content),
+          { inline_keyboard: [[{ text: "↩️ بازگشت به FAQ", callback_data: "faq_menu" }]] }
+        );
+        await setUserStateFields(userId, { lastMenu: String(callback.message.message_id) });
+        return;
+      }
+
+      if (cd === "faq_support") {
+        const content =
+          "📞 <b>چطور با پشتیبانی تماس بگیرم؟</b>\n\n" +
+          "🎫 ارسال تیکت از منوی پشتیبانی (توصیه می‌شود)\n\n" +
+          "📧 ایمیل: support@rbi24.com\n\n" +
+          "⏱ زمان پاسخ‌گویی: ۲۴ تا ۴۸ ساعت کاری";
+        await editMessageText(chatId, callback.message.message_id,
+          formatMessage("پشتیبانی", content),
+          { inline_keyboard: [[{ text: "↩️ بازگشت به FAQ", callback_data: "faq_menu" }]] }
+        );
+        await setUserStateFields(userId, { lastMenu: String(callback.message.message_id) });
         return;
       }
 
       // --- ABOUT ---
       if (cd === "about_menu") {
-        const content = "🌟 <b>درباره RBI24</b>\n\n" +
-          "سیستم آموزشی RBI24 یک ساختار سازمانی چندلایه است که هدف آن:\n" +
-          "• استانداردسازی آموزش‌ها\n" +
-          "• کاهش خطای انسانی\n" +
-          "• رشد مرحله‌به‌مرحله افراد\n\n" +
-          "می‌باشد.";
-        
-        await editMessageText(chatId, callback.message.message_id, 
-          formatMessage("درباره ما", content), 
-          { inline_keyboard: [[{ text: "↩️ بازگشت", callback_data: "back_to_main" }]] }
+        await editMessageText(chatId, callback.message.message_id,
+          formatMessage("ℹ️ درباره ما", "برای دریافت اطلاعات بیشتر، یکی از بخش‌ها را انتخاب کنید:"),
+          aboutMenuKeyboard()
         );
         await setUserStateFields(userId, { lastMenu: String(callback.message.message_id) });
-        await logUserAction(userId, "viewed_about");
+        await logUserAction(userId, "opened_about");
         return;
       }
 
-      // --- SUPPORT MENU ---
+      if (cd === "about_mission") {
+        const content =
+          "🎯 <b>ماموریت ما:</b>\n\n" +
+          "سیستم آموزشی RBI24 با هدف:\n" +
+          "• استانداردسازی آموزش‌ها\n" +
+          "• کاهش خطای انسانی\n" +
+          "• یکسان‌سازی پیام‌ها\n" +
+          "• رشد مرحله‌به‌مرحله افراد\n\n" +
+          "طراحی شده است.";
+        await editMessageText(chatId, callback.message.message_id,
+          formatMessage("ماموریت ما", content),
+          { inline_keyboard: [[{ text: "↩️ بازگشت", callback_data: "about_menu" }]] }
+        );
+        await setUserStateFields(userId, { lastMenu: String(callback.message.message_id) });
+        return;
+      }
+
+      if (cd === "about_structure") {
+        const content =
+          "🏗️ <b>ساختار سازمانی RBI24:</b>\n\n" +
+          "🔹 <b>Starter</b> — مرحله ورود و یادگیری پایه\n\n" +
+          "🔹 <b>Supporter</b> — مرحله اثرگذاری اولیه\n\n" +
+          "🔹 <b>Doer</b> — مرحله اجرا و مسئولیت‌پذیری\n\n" +
+          "🔹 <b>Advisor</b> — مرحله راهبری و هدایت\n\n" +
+          "📌 ارتقای رنک توسط تیم انسانی تعیین می‌شود.";
+        await editMessageText(chatId, callback.message.message_id,
+          formatMessage("ساختار سازمانی", content),
+          { inline_keyboard: [[{ text: "↩️ بازگشت", callback_data: "about_menu" }]] }
+        );
+        await setUserStateFields(userId, { lastMenu: String(callback.message.message_id) });
+        return;
+      }
+
+      if (cd === "about_rules") {
+        const content =
+          "📜 <b>قوانین و مقررات مهم:</b>\n\n" +
+          "✅ رعایت ادب و احترام در تمام تعاملات\n" +
+          "✅ عدم اشتراک‌گذاری اطلاعات خصوصی\n" +
+          "✅ پیروی از دستورالعمل‌های رسمی\n" +
+          "✅ استفاده از کانال‌های رسمی برای دریافت اطلاعات\n\n" +
+          "❌ هرگونه فعالیت خارج از چارچوب مجاز نیست.";
+        await editMessageText(chatId, callback.message.message_id,
+          formatMessage("قوانین و مقررات", content),
+          { inline_keyboard: [[{ text: "↩️ بازگشت", callback_data: "about_menu" }]] }
+        );
+        await setUserStateFields(userId, { lastMenu: String(callback.message.message_id) });
+        return;
+      }
+
+      if (cd === "about_channels") {
+        const content =
+          `📡 <b>کانال‌های رسمی RBI24:</b>\n\n` +
+          `🔹 Starter: ${CHANNELS.starter}\n` +
+          `🔹 Supporter: ${CHANNELS.supporter}\n` +
+          `🔹 Doer: ${CHANNELS.doer}\n` +
+          `🔹 Advisor: ${CHANNELS.advisor}\n\n` +
+          `⚠️ فقط این کانال‌ها رسمی هستند.\n` +
+          `در کانال‌های دیگر اطلاعات دریافت نکنید.`;
+        await editMessageText(chatId, callback.message.message_id,
+          formatMessage("کانال‌های رسمی", content),
+          { inline_keyboard: [[{ text: "↩️ بازگشت", callback_data: "about_menu" }]] }
+        );
+        await setUserStateFields(userId, { lastMenu: String(callback.message.message_id) });
+        return;
+      }
+
+      // --- SUPPORT ---
       if (cd === "support_menu") {
-        await editMessageText(chatId, callback.message.message_id, 
-          formatMessage("سیستم پشتیبانی RBI24", "ما همیشه کنار شما هستیم 💙\n\nیکی از گزینه‌های زیر را انتخاب کنید:"), 
+        await editMessageText(chatId, callback.message.message_id,
+          formatMessage("🛟 پشتیبانی RBI24", "ما همیشه کنار شما هستیم 💙\n\nیکی از گزینه‌ها را انتخاب کنید:"),
           supportMenuKeyboard()
         );
         await setUserStateFields(userId, { lastMenu: String(callback.message.message_id) });
@@ -750,50 +1012,49 @@ async function handleUpdate(update) {
         return;
       }
 
-      // --- SUPPORT EMAIL ---
       if (cd === "support_email") {
-        await editMessageText(chatId, callback.message.message_id, 
-          formatMessage("پشتیبانی ایمیلی", "📧 لطفاً با ایمیل زیر تماس بگیرید:\n\n<b>support@rbi24.com</b>"), 
+        await editMessageText(chatId, callback.message.message_id,
+          formatMessage("📧 پشتیبانی ایمیلی",
+            "لطفاً با ایمیل زیر تماس بگیرید:\n\n<b>support@rbi24.com</b>\n\n⏱ زمان پاسخ: ۲۴ تا ۴۸ ساعت کاری"
+          ),
           { inline_keyboard: [[{ text: "↩️ بازگشت", callback_data: "support_menu" }]] }
         );
         await setUserStateFields(userId, { lastMenu: String(callback.message.message_id) });
         return;
       }
 
-      // --- SUPPORT TICKET ---
       if (cd === "support_ticket") {
         const canSend = await canSendTicket(userId);
-        
         if (!canSend) {
-          await answerCallbackQuery(callback.id, "⚠️ شما حداکثر 3 تیکت در 24 ساعه می‌توانید ارسال کنید.");
+          await answerCallbackQuery(callback.id, "⚠️ حداکثر ۳ تیکت در ۲۴ ساعت مجاز است.");
           return;
         }
-        
+
         const userRec = await getUserById(userId);
         await deleteMenuIfExists(userId, chatId);
-        
+
         if (userRec && userRec.email && userRec.emailConfirmed === "Yes") {
           await setUserStateFields(userId, { step: "awaiting_ticket_message", tempData: userRec.email });
-          const kb = { inline_keyboard: [[{ text: "↩️ لغو", callback_data: "back_to_main_send" }]] };
-          await sendMessage(chatId, 
-            formatMessage("ارسال تیکت", "🎫 لطفاً پیام تیکت خود را وارد کنید:\n\n(ایمیل ثبت‌شده شما به‌صورت خودکار ضمیمه می‌شود)"), 
-            kb
+          await sendMessage(chatId,
+            formatMessage("🎫 ارسال تیکت",
+              "لطفاً پیام تیکت خود را وارد کنید:\n\n(ایمیل ثبت‌شده شما به‌صورت خودکار ضمیمه می‌شود)"
+            ),
+            { inline_keyboard: [[{ text: "↩️ لغو", callback_data: "back_to_main_send" }]] }
           );
         } else {
           await setUserStateFields(userId, { step: "awaiting_ticket_email_1", tempData: "" });
-          const kb = { inline_keyboard: [[{ text: "↩️ لغو", callback_data: "back_to_main_send" }]] };
-          await sendMessage(chatId, 
-            formatMessage("ارسال تیکت", "📧 لطفاً ایمیل خود را وارد کنید:\n(مثال: example@domain.com)"), 
-            kb
+          await sendMessage(chatId,
+            formatMessage("🎫 ارسال تیکت", "📧 لطفاً ایمیل خود را وارد کنید:\n(مثال: example@domain.com)"),
+            { inline_keyboard: [[{ text: "↩️ لغو", callback_data: "back_to_main_send" }]] }
           );
         }
-        
         await logUserAction(userId, "started_ticket");
         return;
       }
 
       return;
-    }
+
+// [CALLBACKS_END]
 
     // ========================================
     // TEXT MESSAGE HANDLERS
@@ -802,21 +1063,134 @@ async function handleUpdate(update) {
     const state = await getUserState(userId);
     const step = state.step || "";
 
-    // --- ADMIN COMMANDS (text-based) ---
+    //// --- ADMIN: /admin command ---
     if (String(userId) === String(ADMIN_CHAT_ID) && text === "/admin") {
       await deleteMenuIfExists(userId, chatId);
-      const mid = await sendMessage(chatId, 
-        formatMessage("پنل ادمین", "به پنل مدیریت ربات خوش آمدید 🔐"), 
+      const mid = await sendMessage(chatId,
+        formatMessage("🔐 پنل مدیریت RBI24",
+          `👋 خوش آمدید\n\n` +
+          `🕐 ${getNow()}\n\n` +
+          `برای مدیریت، یکی از گزینه‌های زیر را انتخاب کنید:`
+        ),
         adminMenuKeyboard()
       );
       if (mid) await setUserStateFields(userId, { lastMenu: String(mid) });
       return;
     }
 
-    // --- ADMIN: Broadcast message ---
+    // --- ADMIN: /announce ---
+    if (String(userId) === String(ADMIN_CHAT_ID) && text && text.startsWith("/announce ")) {
+      const parts = text.replace("/announce ", "").split("|");
+      const title = (parts[0] || "").trim();
+      const msg = (parts[1] || "").trim();
+
+      if (!title || !msg) {
+        await sendMessage(chatId, formatMessage("خطا",
+          "فرمت صحیح:\n<code>/announce عنوان | متن اطلاعیه</code>"
+        ));
+        return;
+      }
+
+      const id = `ANN_${Date.now()}`;
+      await appendRow("Announcements", [id, title, msg, getNow(), "Yes"]);
+      await sendMessage(chatId, formatMessage("✅ اطلاعیه ثبت شد",
+        `عنوان: ${title}\n\nمتن: ${msg}`
+      ));
+      return;
+    }
+
+    // --- ADMIN: Broadcast ---
     if (String(userId) === String(ADMIN_CHAT_ID) && step === "awaiting_broadcast_message" && text) {
       await handleBroadcast(chatId, text);
       await clearUserState(userId);
+      return;
+    }
+
+    // --- ADMIN: Filtered Broadcast - دریافت لیست ID ها ---
+    if (String(userId) === String(ADMIN_CHAT_ID) && step === "awaiting_filtered_ids" && text) {
+      // پارس کردن ID ها (با خط جدید یا کاما)
+      const rawIds = text.replace(/,/g, "\n").split("\n")
+        .map(s => s.trim())
+        .filter(s => s.length > 0);
+
+      if (rawIds.length === 0) {
+        await sendMessage(chatId, formatMessage("خطا", "❌ هیچ ID معتبری یافت نشد."));
+        await clearUserState(userId);
+        return;
+      }
+
+      await setUserStateFields(userId, {
+        step: "awaiting_filtered_message",
+        tempData: rawIds.join(",")
+      });
+
+      await sendMessage(chatId,
+        formatMessage("🎯 پیام فیلتر شده",
+          `✅ ${rawIds.length} کاربر انتخاب شد.\n\nحالا متن پیام را ارسال کنید:`
+        ),
+        { inline_keyboard: [[{ text: "❌ لغو", callback_data: "admin_close" }]] }
+      );
+      return;
+    }
+
+    // --- ADMIN: Filtered Broadcast - ارسال پیام ---
+    if (String(userId) === String(ADMIN_CHAT_ID) && step === "awaiting_filtered_message" && text) {
+      const targetIds = (state.tempData || "").split(",").filter(s => s.trim());
+      await handleFilteredBroadcast(chatId, targetIds, text);
+      await clearUserState(userId);
+      return;
+    }
+
+    // --- ADMIN: Ticket reply ---
+    if (String(userId) === String(ADMIN_CHAT_ID) && step === "awaiting_ticket_reply" && text) {
+      const ticketId = state.tempData || "";
+      const tickets = await readSheet("Tickets");
+      let ticketRowIdx = -1;
+      let ticketRow = null;
+
+      for (let i = 1; i < tickets.length; i++) {
+        if (String(tickets[i][0]) === String(ticketId)) {
+          ticketRowIdx = i;
+          ticketRow = tickets[i];
+          break;
+        }
+      }
+
+      if (!ticketRow) {
+        await sendMessage(chatId, formatMessage("خطا", "❌ تیکت پیدا نشد."));
+        await clearUserState(userId);
+        return;
+      }
+
+      const targetUserId = ticketRow[1];
+      const email = ticketRow[2] || "";
+      const now = getNow();
+
+      ticketRow[4] = text;
+      ticketRow[6] = now;
+      ticketRow[7] = "No";
+      await updateRow("Tickets", ticketRowIdx + 1, ticketRow);
+
+      try {
+        await sendMessage(targetUserId,
+          formatMessage("📢 پاسخ تیکت",
+            `شماره تیکت: <code>${ticketId}</code>\n\n${text}`
+          ),
+          { inline_keyboard: [[{ text: "↩️ منوی اصلی", callback_data: "back_to_main_send" }]] }
+        );
+        ticketRow[7] = "Yes";
+        await updateRow("Tickets", ticketRowIdx + 1, ticketRow);
+      } catch (e) {
+        console.error("ticket reply send failed:", e.message);
+      }
+
+      await clearUserState(userId);
+      await sendMessage(chatId,
+        formatMessage("✅ پاسخ ارسال شد",
+          `پاسخ به تیکت ${ticketId} با موفقیت ارسال شد.`
+        ),
+        adminMenuKeyboard()
+      );
       return;
     }
 
@@ -1107,37 +1481,55 @@ async function handleAdminStats(chatId, messageId) {
 async function handleAdminViewTickets(chatId, messageId) {
   try {
     const tickets = await readSheet("Tickets");
-    let content = "";
-    let count = 0;
+    const openTickets = [];
 
     for (let i = 1; i < tickets.length; i++) {
       const row = tickets[i];
       if (!(row[4] || "").trim()) {
-        const tid = row[0] || "";
-        const uid = row[1] || "";
-        const email = row[2] || "";
-        const msg = (row[3] || "").substring(0, 80);
-        const date = row[5] || "";
-
-        content += `🔖 <code>${tid}</code>\n👤 ${uid} | ${email}\n📝 ${msg}...\n🗓 ${date}\n\n`;
-        count++;
-        if (count >= 5) break;
+        openTickets.push({ row, idx: i });
       }
     }
 
-    if (!content) {
-      content = "✅ در حال حاضر تیکت باز وجود ندارد.";
-    } else {
-      content = `<b>${count} تیکت باز:</b>\n\n` + content +
-        `برای پاسخ:\n<code>/reply_TICKET_ID</code>`;
+    if (openTickets.length === 0) {
+      await editMessageText(chatId, messageId,
+        formatMessage("🎫 تیکت‌های باز", "✅ در حال حاضر تیکت باز وجود ندارد."),
+        { inline_keyboard: [[{ text: "↩️ بازگشت", callback_data: "admin_close" }]] }
+      );
+      return;
     }
 
+    // نمایش ۵ تیکت اول + دکمه پاسخ برای هر کدام
+    const showTickets = openTickets.slice(0, 5);
+    let content = `<b>${openTickets.length} تیکت باز</b> (نمایش ${showTickets.length}):\n\n`;
+
+    const keyboard = { inline_keyboard: [] };
+
+    for (const { row } of showTickets) {
+      const tid = row[0] || "";
+      const uid = row[1] || "";
+      const email = row[2] || "";
+      const msg = (row[3] || "").substring(0, 60);
+      const date = row[5] || "";
+
+      content += `🔖 <code>${tid}</code>\n`;
+      content += `👤 ${uid} | ${email}\n`;
+      content += `📝 ${msg}${msg.length >= 60 ? "..." : ""}\n`;
+      content += `🗓 ${date}\n\n`;
+
+      keyboard.inline_keyboard.push([
+        { text: `✍️ پاسخ به ${tid.substring(0, 15)}...`, callback_data: `admin_reply_ticket_${tid}` }
+      ]);
+    }
+
+    keyboard.inline_keyboard.push([{ text: "↩️ بازگشت", callback_data: "admin_close" }]);
+
     await editMessageText(chatId, messageId,
-      formatMessage("تیکت‌های باز", content),
-      { inline_keyboard: [[{ text: "↩️ بستن", callback_data: "admin_close" }]] }
+      formatMessage("🎫 تیکت‌های باز", content),
+      keyboard
     );
   } catch (e) {
     console.error("handleAdminViewTickets error:", e.message);
+    await sendMessage(chatId, formatMessage("خطا", "❌ خطا در دریافت تیکت‌ها."));
   }
 }
 
@@ -1214,6 +1606,55 @@ async function handleBroadcast(chatId, messageText) {
   }
 }
 
+async function handleFilteredBroadcast(chatId, targetIds, messageText) {
+  try {
+    await sendMessage(chatId, `⏳ در حال ارسال پیام به ${targetIds.length} کاربر...`);
+
+    let sent = 0, failed = 0;
+    const broadcastId = `FBC_${Date.now()}`;
+    const now = getNow();
+
+    for (const targetId of targetIds) {
+      const id = targetId.trim();
+      if (!id) continue;
+
+      try {
+        const mid = await sendMessage(id,
+          formatMessage("📨 پیام اختصاصی RBI24", messageText)
+        );
+        if (mid) {
+          sent++;
+          await appendRow("BroadcastLogs", [broadcastId, id, mid, now, "No"]);
+        } else {
+          failed++;
+        }
+      } catch (e) {
+        failed++;
+      }
+
+      await sleep(50);
+    }
+
+    // ذخیره لاگ خلاصه
+    await appendRow("FilteredBroadcast", [
+      broadcastId,
+      targetIds.join(","),
+      messageText.substring(0, 100),
+      now,
+      sent
+    ]);
+
+    await sendMessage(chatId,
+      formatMessage("✅ نتیجه ارسال",
+        `✅ ارسال موفق: ${sent}\n❌ ناموفق: ${failed}\n🆔 شناسه: ${broadcastId}`
+      ),
+      adminMenuKeyboard()
+    );
+  } catch (e) {
+    console.error("handleFilteredBroadcast error:", e.message);
+    await sendMessage(chatId, "❌ خطا در ارسال پیام فیلتر شده.");
+  }
+}
 
 // ========================================
 // EXPRESS ROUTES
@@ -1366,3 +1807,4 @@ main().catch(err => {
 
 
     
+
