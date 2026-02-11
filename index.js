@@ -1053,8 +1053,8 @@ async function handleUpdate(update) {
       }
 
       return;
+    } // end if (callback)
 
-// [CALLBACKS_END]
 
     // ========================================
     // TEXT MESSAGE HANDLERS
@@ -1541,8 +1541,11 @@ async function handleAdminBackup(chatId) {
       "Users", "State", "Tickets", "EmailLog",
       "InvestRequests", "WithdrawRequests",
       "BroadcastLogs", "Announcements", "FAQ",
-      "UserActions", "TicketRateLimits"
+      "UserActions", "TicketRateLimits",
+      "Lessons", "FilteredBroadcast"
     ];
+
+
 
     const backup = { exportedAt: getNow(), version: "2.0", sheets: {} };
 
@@ -1807,4 +1810,5 @@ main().catch(err => {
 
 
     
+
 
